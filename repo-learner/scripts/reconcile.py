@@ -244,12 +244,19 @@ def check_env_manager_consistency(learn_dir: Path, config: dict) -> CheckResult:
     # unspecified (back-compat for .config.json predating language support).
     language = (config.get("repo") or {}).get("language", "python").lower()
     forbidden = PACKAGE_MANAGERS.get(language, set()) - {env_manager}
+
+    # Strip compound forms where env_manager is the leading word, so e.g.
+    # `uv pip install` doesn't trip the `pip` forbid when env_manager is `uv`.
+    # `uv pip` is a real uv subcommand, not a reference to standalone pip.
+    compound_re = re.compile(rf"\b{re.escape(env_manager)}\s+\w+", re.IGNORECASE)
+
     for path in user_facing_files(learn_dir):
         text = path.read_text(errors="replace")
+        # Replace compound forms with spaces (preserves line numbers).
+        scan_text = compound_re.sub(lambda m: " " * len(m.group(0)), text)
         for mgr in forbidden:
-            # word-boundary match; case-insensitive
-            for m in re.finditer(rf"\b{re.escape(mgr)}\b", text, re.IGNORECASE):
-                line_no = text.count("\n", 0, m.start()) + 1
+            for m in re.finditer(rf"\b{re.escape(mgr)}\b", scan_text, re.IGNORECASE):
+                line_no = scan_text.count("\n", 0, m.start()) + 1
                 r.failures.append(f"{path}:{line_no}: references '{mgr}' (env_manager is '{env_manager}', language is '{language}')")
                 break  # one hit per file per manager
     r.passed = not r.failures

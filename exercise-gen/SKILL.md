@@ -296,17 +296,29 @@ When the mock student passes, set `validator_passed: true` in
 Apply fixes silently. Only surface to the user if an exercise had to be
 cut entirely.
 
-**Channel 2: nbconvert execute (execution check).** In a fresh virtual env
-matching `learn/notebooks/requirements.txt`, run:
+**Channel 2: nbconvert execute (environment check).** This channel verifies
+the *environment*, not solution correctness — that's Channel 1's job. In
+the venv installed by Stage 4c, run:
 
 ```
-jupyter nbconvert --to notebook --execute learn/notebooks/exercise-NN-*.ipynb
+jupyter nbconvert --to notebook --execute --allow-errors learn/notebooks/exercise-NN-*.ipynb
 ```
 
-This catches env mismatches the mock student misses (a wheel missing on
-the target platform, version skew, OS-specific failures). Fix the
-underlying issue, not the symptom — if a dep is missing, add it to
-requirements.txt; if a code path is OS-specific, generalize it.
+`--allow-errors` is required. The scaffold cell intentionally raises
+`NotImplementedError` (Python) or the language equivalent — it's a
+placeholder for the learner. Likewise the validation cell will fail because
+the scaffold isn't filled in. **Those failures are expected** and do NOT
+fail this check.
+
+What you actually verify after the run: inspect the executed notebook's
+cell outputs and confirm:
+- The setup cell ran without error (imports succeeded).
+- Every guided walkthrough cell ran without error.
+- The only cells with errors are the scaffold and validation cells.
+
+If a setup or guided cell errored, the env is broken. Fix the underlying
+issue (missing dep, wrong wheel for the platform, OS-specific code path) —
+don't paper over it. Solution correctness is Channel 1's job, not this one.
 
 When both channels write to `validation_report.json` and pass, update the
 manifest: `status: validated`.
