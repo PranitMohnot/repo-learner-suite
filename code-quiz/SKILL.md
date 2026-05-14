@@ -1,88 +1,113 @@
 ---
 name: code-quiz
 description: >
-  Quiz the user on their understanding of a codebase, either per-section from a
-  curriculum or on recent code changes. Adaptive difficulty, one question at a time,
-  always shows code context, honest verdicts. Trigger on "/learn quiz", "quiz me",
-  "test my understanding", "grill me", "do I understand this", or when another skill
-  delegates quizzing. Works in two modes: curriculum quiz (from learn/quiz-bank.md)
-  and diff quiz (from git changes, for post-autonomous-session comprehension checks).
+  Quiz the user on their understanding of a curriculum section. Adaptive,
+  one question at a time, always shows code context, honest verdicts.
+  Trigger on "/learn quiz", "quiz me", "test my understanding", "grill me",
+  "do I understand this", or when another skill delegates quizzing.
+  Requires learn/curriculum.md and learn/internals/quiz-bank.md (run
+  repo-analyzer first).
 ---
 
 # Code Quiz
 
-Adaptive quiz on codebase understanding. Two modes:
+Adaptive quiz on a curriculum section. Pulls from
+`learn/internals/quiz-bank.md`; generates fresh questions from source when
+the bank is exhausted or the user has seen the existing ones.
 
-## Mode 1: Curriculum Quiz (`/learn quiz [section-id | --full]`)
+The quiz bank is a working document. APPEND new questions when generated.
+EDIT existing questions or answers when the user gives a reasonable answer
+the "correct" answer doesn't cover. Treat the bank as a living resource
+that improves with each session.
 
-Pull questions from `learn/internals/quiz-bank.md`. If the user has seen them, generate
-fresh questions from the section's source files.
+## Entering a session
 
-**The quiz bank is a working document.** When generating fresh questions, APPEND them to
-`learn/internals/quiz-bank.md` so they're available for future runs. If a question turns
-out to be ambiguous or misleading (user gives a reasonable answer that the "correct" answer
-doesn't cover), edit the question or answer in the bank. Treat quiz-bank.md as a living
-resource that improves with each quiz session.
+1. Resolve the section: explicit ID (`/learn quiz 1.3`), `--full` for the
+   whole curriculum, or default to the next unchecked section.
+2. Load the section's questions from the bank, the section text from
+   curriculum.md, and the source files it cites.
+3. Plan 5–7 questions for a single section, more for `--full`.
 
-## Mode 2: Diff Quiz (`/quiz` or `/quiz last N commits`)
+## Question palette (mix; do not name the types to the user)
 
-Quiz on recent code changes — designed for after autonomous Claude Code sessions.
+Pull from several of these in any quiz. The user should experience a
+varied, well-crafted set — not a labeled taxonomy. Never say "this is a
+conceptual question" or announce the type; just ask.
 
-1. Gather the diff scope:
-   - No args → `git diff` + `git diff --cached`. If empty, `git diff HEAD~1`.
-   - `last N commits` → `git diff HEAD~N`
-   - `<branch>` → `git diff main..<branch>`
-2. Run `git diff --stat` for the overview, then read the full diff.
-3. Generate questions from the changes.
+Examples below span several libraries deliberately — the palette is
+domain-agnostic. Draw real questions from the codebase being quizzed.
 
-## Question Flow
+- **Recall** — vocabulary. "What does `Session.execute()` return in
+  SQLAlchemy 2.x?" "What's the default `timeout` for `httpx.Client`?"
+  Fast confidence-builders.
+- **Conceptual** — mental model. "Why does pydantic validate at
+  construction time instead of on access?" "What invariant does
+  `Session.begin()` preserve about transaction state?"
+- **Predictive** — cause and effect. "If you drop `pool_size` from 5 to 1
+  under concurrent load, what changes?" "What happens on the first call
+  to an `@lru_cache`'d function vs the second?"
+- **Diagnostic** — error model. Show plausibly broken code: "This pydantic
+  model raises `ValidationError` on construction. What's wrong?"
+- **Applied** — transfer. "You want to add request signing to every call
+  on an existing `httpx.AsyncClient`. Sketch how."
+- **Architectural** — design intent. "Why does pandas split `merge` and
+  `join` into two methods?" "Why does FastAPI use dependency injection
+  for auth rather than middleware?"
 
-**One at a time. Always.** Don't show the next question until the current one is answered.
+A 5–7 question quiz should span at least 3 types. All-recall is boring; all-architectural is exhausting; all-predictive becomes guessing.
+Quizzes should also adapt to the user's stated goals (e.g. do not hammer low-level implementation details if the user just wants a curosry API understanding).
+
+## Depth bands (orthogonal to type)
+
+Any type can be asked shallow or deep.
+
+- **Warm-up** (1–2 per quiz): single fact, short answer expected.
+- **Normal** (2–3): requires connecting two pieces or one short trace.
+- **Deep** (1–2): multi-step, multi-file, or genuinely novel application.
+
+Adaptive: if the warm-ups land instantly, skip them next time and start
+at normal. If they miss normals, slow down and explain more before
+continuing. If they crush everything, push into deep + types they haven't
+seen yet.
+
+## Question flow
+
+One question at a time. Never preview the next.
 
 For each question:
-1. Show the code context (snippet with file path and line numbers)
-2. Ask the question
-3. Wait
-4. Evaluate and give feedback
-5. Adjust difficulty, proceed
-
-## Difficulty Distribution (5-7 questions for a section quiz)
-
-- 2 warm-up: "What does X return?", "What type is Y?"
-- 2-3 conceptual: "Why X instead of Y?", "What's the tradeoff?"
-- 1-2 hard: "What breaks if you change Z?", "Trace this through 3 modules"
-
-**Adaptive:** If they nail warm-ups instantly → skip to conceptual. If they miss
-conceptuals → slow down, explain more. If crushing everything → add expert questions.
-
-## Evaluating Answers
-
-- **Correct:** Confirm briefly. "Right. The semaphore bounds concurrent connections."
-- **Partially correct:** Acknowledge the right part, push on the gap.
-- **Wrong:** Explain the misconception, redirect. Never just "wrong."
-- **"I don't know":** Respect it. Give the answer with explanation. Note for summary.
+1. Show the code context (file path + line numbers + the snippet).
+2. Ask the question.
+3. Wait for the answer.
+4. Evaluate honestly:
+   - **Correct.** Confirm in one line — say *why* it's right, not just "yes."
+   - **Partial.** Acknowledge the right part, push on the gap with a
+     follow-up that doesn't give away the missing piece.
+   - **Wrong.** Name the misconception. Redirect with a hint to the file
+     or concept that resolves it. Never just "wrong."
+   - **"I don't know."** Respect it. Give the answer with the explanation
+     the section earned. Note it for the summary.
+5. Adjust the next question's type/depth based on what just happened.
 
 ## Summary
 
-After all questions:
+After the last question:
 
 ```
-## Quiz Results: [Section or Diff scope]
+## Quiz: Section X.Y
 
-**Score: X/Y**
+Score: X/Y
 
-**Strong areas:** [what they understand well]
-
-**Gaps to address:** [specific files/concepts to review, with line references]
-
-**Verdict:** [Ready to continue / Review these areas first / Do not merge until...]
+Strong: [concepts they clearly have]
+Gaps: [specific files/lines/concepts to revisit]
+Suggested next: [continue to X.Z / revisit this section / focused re-read of file]
 ```
 
-Be honest. If they bombed it, say so constructively with specific remediation steps.
+Be honest. If they bombed it, say so constructively with specific
+remediation. If they aced it, say that too — and consider promoting them
+into deeper questions next time.
 
-## Pre-PR Mode
+## Tone
 
-When the user says "quiz me before I PR" or "don't let me merge until I pass":
-- Full quiz on the diff
-- Require correct answers on all hard questions
-- End with explicit "ready to merge" / "not ready — review these areas" verdict
+Senior engineer running a whiteboard session. Direct, not harsh.
+Encouraging when earned. Honest about confusion. Never patronizing, never
+fake-cheerful, never theatrical about wrong answers.

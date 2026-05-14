@@ -68,18 +68,27 @@ class ExerciseSpec:
     solution_code: str = ""
     solution_explanation: str = ""
     dependencies: list[str] = field(default_factory=list)  # pip packages
+    kernel_name: str = "python3"            # registered Jupyter kernel name
+    kernel_display_name: str = "Python 3"   # shown in kernel picker
 
 
 def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
     """Generate a .ipynb file from an ExerciseSpec. Returns the output path."""
     nb = new_notebook()
     nb.metadata.kernelspec = {
-        "display_name": "Python 3",
+        "display_name": spec.kernel_display_name,
         "language": "python",
-        "name": "python3"
+        "name": spec.kernel_name,
     }
 
     # Title and context
+    context_text = ""
+    if spec.curriculum_section:
+        sec = spec.curriculum_section
+        context_text = (
+            f"\n\n**Context:** Companion to "
+            f"[curriculum.md §{sec}](../curriculum.md#s{sec})."
+        )
     prereq_text = ""
     if spec.prerequisites:
         prereq_links = ", ".join(spec.prerequisites)
@@ -90,6 +99,7 @@ def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
         f"**Goal:** {spec.goal}\n\n"
         f"**Type:** {spec.exercise_type} · "
         f"**Estimated time:** ~{spec.estimated_minutes} minutes"
+        f"{context_text}"
         f"{prereq_text}"
     ))
 
@@ -98,14 +108,13 @@ def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
         nb.cells.append(new_markdown_cell("## Setup\n\nRun this cell first to load dependencies."))
         nb.cells.append(new_code_cell(spec.setup_code))
 
-    # Guided walkthrough cells
-    if spec.guided_cells:
-        nb.cells.append(new_markdown_cell("## Walkthrough"))
-        for cell_spec in spec.guided_cells:
-            if cell_spec.cell_type == "markdown":
-                nb.cells.append(new_markdown_cell(cell_spec.source))
-            else:
-                nb.cells.append(new_code_cell(cell_spec.source))
+    # Guided walkthrough cells — no synthetic "Walkthrough" header; the spec's
+    # own markdown cells frame the narrative against curriculum.md context.
+    for cell_spec in spec.guided_cells:
+        if cell_spec.cell_type == "markdown":
+            nb.cells.append(new_markdown_cell(cell_spec.source))
+        else:
+            nb.cells.append(new_code_cell(cell_spec.source))
 
     # Task description
     nb.cells.append(new_markdown_cell(
@@ -130,12 +139,13 @@ def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
         ))
         nb.cells.append(new_code_cell("# Your stretch goal code here\n"))
 
-    # Solution (collapsed by default)
+    # Solution stays as a runnable code cell. source_hidden collapses it in
+    # JupyterLab; VS Code and classic Jupyter show it expanded. Acceptable
+    # trade-off — solutions must be runnable. See suite TODO.md for the
+    # cross-viewer collapse question.
     if spec.solution_code:
         nb.cells.append(new_markdown_cell(
-            "---\n\n## Solution\n\n"
-            "⚠️ **Try the exercise before expanding.** "
-            "You learn more from struggling than from reading."
+            "---\n\n## Solution\n\nTry the exercise before expanding."
         ))
         solution_cell = new_code_cell(spec.solution_code)
         solution_cell.metadata["jupyter"] = {"source_hidden": True}
@@ -153,6 +163,29 @@ def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
         nbformat.write(nb, f)
 
     return str(output)
+
+
+def emit_validation_stub(spec: ExerciseSpec, validation_dir: str) -> str:
+    """Write an empty validation_report.json for this exercise.
+
+    The reconciliation pass refuses to declare pipeline "done" until both
+    haiku_passed and nbconvert_passed are true. Emitting the stub at scaffold
+    time ensures the file exists for reconciliation to inspect even if a
+    validation channel crashed.
+    """
+    report = {
+        "exercise": f"{spec.number:02d}",
+        "title": spec.title,
+        "curriculum_section": spec.curriculum_section,
+        "haiku_passed": None,
+        "nbconvert_passed": None,
+        "haiku_report": None,
+        "nbconvert_log": None,
+    }
+    out = Path(validation_dir) / f"exercise-{spec.number:02d}.validation.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+    return str(out)
 
 
 def generate_requirements(specs: list[ExerciseSpec], output_path: str) -> str:
@@ -198,18 +231,38 @@ dependencies = [{deps_str}]
     return str(output)
 
 
-def generate_readme(specs: list[ExerciseSpec], output_path: str, detected_manager: str = "pip") -> str:
-    """Generate README.md with exercise sequence and descriptions."""
-    if detected_manager == "uv":
-        setup_block = "```bash\n# Recommended (uv detected)\nuv sync\n\n# Or with pip\npip install -r requirements.txt\n```"
-    else:
-        setup_block = "```bash\npip install -r requirements.txt\n\n# Or with uv\nuv sync\n```"
+def generate_readme(
+    specs: list[ExerciseSpec],
+    output_path: str,
+    env_manager: str = "pip",
+    kernel_name: str = "python3",
+) -> str:
+    """Generate README.md with exercise sequence and descriptions.
+
+    Only references the user's chosen env_manager. Never lists alternatives —
+    the .config.json env_manager is source of truth.
+    """
+    setup_commands = {
+        "uv":     "uv venv && uv sync",
+        "pip":    "python -m venv .venv && source .venv/bin/activate\npip install -r requirements.txt",
+        "poetry": "poetry install",
+        "conda":  "conda env create -f environment.yml && conda activate learn",
+    }
+    install_cmd = setup_commands.get(env_manager, setup_commands["pip"])
+    setup_block = (
+        "```bash\n"
+        f"{install_cmd}\n"
+        "\n"
+        f"# Register this venv as a Jupyter kernel (one-time):\n"
+        f"python -m ipykernel install --user --name={kernel_name}\n"
+        "```\n"
+    )
 
     lines = [
         "# Exercises\n",
         "Work through these notebooks in order. Each one builds on the previous.\n",
         "## Setup\n",
-        setup_block + "\n",
+        setup_block,
         "## Exercise Sequence\n",
         "| # | Title | Type | Time | Goal |",
         "|---|-------|------|------|------|",
@@ -265,6 +318,8 @@ def from_json(spec_path: str) -> list[ExerciseSpec]:
             solution_code=item.get("solution_code", ""),
             solution_explanation=item.get("solution_explanation", ""),
             dependencies=item.get("dependencies", []),
+            kernel_name=item.get("kernel_name", "python3"),
+            kernel_display_name=item.get("kernel_display_name", "Python 3"),
         ))
 
     return specs
@@ -274,18 +329,24 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate exercise notebooks from specs")
     parser.add_argument("--spec", required=True, help="Path to exercise spec JSON")
-    parser.add_argument("--output", required=True, help="Output directory for notebooks")
+    parser.add_argument("--output", required=True, help="Output directory for notebooks (learn/notebooks/)")
+    parser.add_argument("--validation-dir", help="Directory for validation_report.json stubs (default: ../internals/validation/)")
+    parser.add_argument("--env-manager", default="pip", choices=["uv", "pip", "poetry", "conda"], help="Package manager for README.md")
+    parser.add_argument("--kernel-name", default="python3", help="Jupyter kernel name (used in README.md install hint)")
     args = parser.parse_args()
 
     specs = from_json(args.spec)
     output_dir = Path(args.output)
+    validation_dir = Path(args.validation_dir) if args.validation_dir else output_dir.parent / "internals" / "validation"
 
     for spec in specs:
         filename = f"exercise-{spec.number:02d}-{slugify(spec.title)}.ipynb"
         path = generate_notebook(spec, output_dir / filename)
+        stub = emit_validation_stub(spec, validation_dir)
         print(f"Generated: {path}")
+        print(f"  Stub:    {stub}")
 
     generate_requirements(specs, output_dir / "requirements.txt")
     generate_pyproject(specs, output_dir / "pyproject.toml")
-    generate_readme(specs, output_dir / "README.md")
+    generate_readme(specs, output_dir / "README.md", env_manager=args.env_manager, kernel_name=args.kernel_name)
     print(f"\nGenerated {len(specs)} notebooks in {output_dir}/")
