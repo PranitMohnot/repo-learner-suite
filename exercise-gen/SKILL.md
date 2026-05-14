@@ -245,6 +245,24 @@ nbconvert validation either skipping silently or failing on missing deps.
      pins or substitute.
    Don't silently skip — Stage 4d needs the env to exist.
 
+4. **Register the notebook env as a named Jupyter kernel.** Without this
+   step, editors (VS Code in particular) have no idea which Python to
+   use when the user opens a notebook, and they get dumped into a kernel
+   picker with no obvious right answer. The notebook's
+   `kernelspec.name` is set by `scaffold_notebook.py` to `learn-<repo>`;
+   this step actually registers that name against the venv.
+
+   From `learn/notebooks/`, run (Python + uv example):
+   ```
+   uv run python -m ipykernel install --user --name=learn-<repo> --display-name="Learn <Repo>"
+   ```
+   For pip: `python -m ipykernel install --user --name=...` after
+   `source .venv/bin/activate`. For other env managers, the equivalent
+   `<manager> run python -m ipykernel ...` form.
+
+   Confirm by running `jupyter kernelspec list` — the new kernel name
+   should appear.
+
 #### Stage 4d: Validation (MANDATORY — two channels)
 
 `scaffold_notebook.py` emits a `learn/internals/validation/exercise-NN.validation.json`

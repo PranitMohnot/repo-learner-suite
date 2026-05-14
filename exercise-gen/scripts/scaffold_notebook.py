@@ -344,17 +344,25 @@ def generate_readme(
 
     # Python kernel registration hint. Other languages (when added) should
     # branch here and supply their own one-time-setup hint.
-    kernel_hint = (
-        f"# Register this venv as a Jupyter kernel (one-time):\n"
-        f"python -m ipykernel install --user --name={kernel_name}"
-    )
+    # Using `uv run` (or analog) ensures the kernel is registered against the
+    # notebooks/ venv, not the user's global Python.
+    display_name = f"Learn {kernel_name.removeprefix('learn-')}" if kernel_name.startswith("learn-") else kernel_name
+    if env_manager == "uv":
+        kernel_register = f"uv run python -m ipykernel install --user --name={kernel_name} --display-name=\"{display_name}\""
+    else:
+        kernel_register = f"python -m ipykernel install --user --name={kernel_name} --display-name=\"{display_name}\""
 
     setup_block = (
         "```bash\n"
         f"{install_cmd}\n"
         "\n"
-        f"{kernel_hint}\n"
+        f"# Register the notebooks' venv as a Jupyter kernel (one-time):\n"
+        f"{kernel_register}\n"
         "```\n"
+        f"\n"
+        f"Then pick **\"{display_name}\"** from your editor's kernel picker. "
+        f"In JupyterLab it shows up automatically; in VS Code, reload the "
+        f"notebook view after registering.\n"
     )
 
     lines = [
@@ -436,7 +444,13 @@ if __name__ == "__main__":
     parser.add_argument("--env-manager", default="",
                         help="Package manager for the notebooks/ README. Defaults per language.")
     parser.add_argument("--kernel-name", default="",
-                        help="Override Jupyter kernel name (default: derived from --language).")
+                        help="Override Jupyter kernel name. Default: 'learn-<repo>' (e.g. learn-frax).")
+    parser.add_argument("--kernel-display-name", default="",
+                        help="Override Jupyter kernel display name. Default: 'Learn <Repo>'.")
+    parser.add_argument("--repo-root", default="",
+                        help="Path to the host repo being learned. Default: <output>/../..")
+    parser.add_argument("--repo-name", default="",
+                        help="Importable name of the host repo. Default: <repo_root>.name.")
     args = parser.parse_args()
 
     specs = from_json(args.spec)
@@ -446,13 +460,29 @@ if __name__ == "__main__":
     profile = LANGUAGE_PROFILES[args.language]
     if not args.env_manager:
         args.env_manager = profile.default_env_manager
-    if not args.kernel_name:
-        args.kernel_name = profile.kernel_name
 
-    # Apply the run-wide language to any specs that left it blank.
+    # Resolve repo identity once (env files, kernelspec name, README all need it).
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else output_dir.parent.parent.resolve()
+    repo_name = args.repo_name or repo_root.name
+
+    # Derive kernel name/display from repo identity (per-project, no clash with
+    # the system default "python3" kernel). Override with CLI flag if needed.
+    if not args.kernel_name:
+        # For Python, name the kernel after the repo so each project gets its
+        # own registered kernel. For non-Python langs, use the language default
+        # (kernels there aren't typically per-project).
+        args.kernel_name = f"learn-{slugify(repo_name)}" if args.language == "python" else profile.kernel_name
+    if not args.kernel_display_name:
+        args.kernel_display_name = f"Learn {repo_name}" if args.language == "python" else profile.kernel_display_name
+
+    # Apply the run-wide language + kernel name to any specs that left them blank.
     for spec in specs:
         if not spec.language:
             spec.language = args.language
+        if not spec.kernel_name:
+            spec.kernel_name = args.kernel_name
+        if not spec.kernel_display_name:
+            spec.kernel_display_name = args.kernel_display_name
 
     for spec in specs:
         filename = f"exercise-{spec.number:02d}-{slugify(spec.title)}.ipynb"
@@ -461,7 +491,7 @@ if __name__ == "__main__":
         print(f"Generated: {path}")
         print(f"  Stub:    {stub}")
 
-    generate_env_files(specs, output_dir, language=args.language)
+    generate_env_files(specs, output_dir, language=args.language, repo_root=repo_root, repo_name=repo_name)
     generate_readme(
         specs, output_dir / "README.md",
         env_manager=args.env_manager,
@@ -469,3 +499,4 @@ if __name__ == "__main__":
         language=args.language,
     )
     print(f"\nGenerated {len(specs)} notebooks in {output_dir}/ ({args.language})")
+    print(f"Kernel name: {args.kernel_name}  (register with: uv run python -m ipykernel install --user --name={args.kernel_name} --display-name='{args.kernel_display_name}')")
