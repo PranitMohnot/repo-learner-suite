@@ -140,3 +140,7 @@ without ever naming them to the user.
 Analysis follows a global→local cognitive flow (project overview →
 architecture → local functions), mirroring how expert code auditors onboard
 new codebases.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
