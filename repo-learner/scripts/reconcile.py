@@ -44,7 +44,13 @@ TOOL_FRAGMENT_RES = [
     re.compile(r"<\s*invoke\b", re.IGNORECASE),
 ]
 
-PACKAGE_MANAGERS = {"uv", "pip", "poetry", "conda"}
+# Package managers tracked per language. Used by the env-manager
+# consistency check (no manager other than .config.json's env_manager
+# should appear in user-facing artifacts).
+PACKAGE_MANAGERS = {
+    "python": {"uv", "pip", "poetry", "conda"},
+    # To add a new language, add its package-manager names here.
+}
 
 
 def parse_manifest(learn_dir: Path) -> list[dict]:
@@ -234,16 +240,17 @@ def check_env_manager_consistency(learn_dir: Path, config: dict) -> CheckResult:
         r.warnings.append(".config.json missing user.env_manager — skipping check")
         r.passed = True
         return r
-    forbidden = PACKAGE_MANAGERS - {env_manager}
+    # Pick the forbidden set for the repo's language. Default python if
+    # unspecified (back-compat for .config.json predating language support).
+    language = (config.get("repo") or {}).get("language", "python").lower()
+    forbidden = PACKAGE_MANAGERS.get(language, set()) - {env_manager}
     for path in user_facing_files(learn_dir):
         text = path.read_text(errors="replace")
         for mgr in forbidden:
             # word-boundary match; case-insensitive
             for m in re.finditer(rf"\b{re.escape(mgr)}\b", text, re.IGNORECASE):
                 line_no = text.count("\n", 0, m.start()) + 1
-                # Skip false positives: "conda" inside a URL, "pip" inside "pipeline", etc.
-                # Word boundary already handles "pipeline"; URLs are rare in our artifacts.
-                r.failures.append(f"{path}:{line_no}: references '{mgr}' (env_manager is '{env_manager}')")
+                r.failures.append(f"{path}:{line_no}: references '{mgr}' (env_manager is '{env_manager}', language is '{language}')")
                 break  # one hit per file per manager
     r.passed = not r.failures
     return r

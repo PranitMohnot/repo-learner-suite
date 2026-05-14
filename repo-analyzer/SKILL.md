@@ -23,6 +23,12 @@ artifacts those contracts govern.
 
 ## Analysis Flow
 
+Read `learn/internals/.config.json:repo.language` first (set by the
+orchestrator in Step 0 of its front-loaded questions). The analyzer reads
+code in any language; the language only shapes which file extensions are
+worth scanning, what `library()` / `import` patterns look like, and what
+"runnable example" means for the cheatsheet.
+
 Follow the global→local cognitive flow identified in codebase comprehension
 research (Gao et al., 2025 — CodeMap):
 
@@ -246,6 +252,32 @@ mode (the default) is unaffected.
 
 Everything else (markers, anchors, manifest schema, reconciliation) is
 identical to comprehensive mode.
+
+## Test mode
+
+If `.config.json:tuning.mode == "test"`, run the smoke-test variant. The
+output directory is `learn_test/` (set by the orchestrator); paths in
+this SKILL.md describing `learn/...` shift to `learn_test/...`.
+
+- Level 1 (Global): unchanged. Read the README, top-level docs, build
+  config to identify the project's purpose and stack. This is what makes
+  Section 0 specific to *this* repo.
+- Level 2 (Structural): identify the single most important module / public
+  entry point. Skim that one file's surface.
+- Level 3 (Local): produce **only Section 0 (overview) and Section 1.1**
+  (one usage-tier section centered on the entry point identified above).
+  No other sections.
+- Cheatsheet: ~30 lines. Just the most-cited symbols / quickstart.
+- Quiz bank: seed **3 questions** in `internals/quiz-bank.md`, one each
+  for recall, conceptual, and predictive types — enough to exercise the
+  palette without bulk.
+- Manifest: 1 entry. Pick the simplest "use" exercise that touches Section
+  1.1's content. Status starts `planned`. exercise-gen takes it from there.
+
+Everything else (anchors, markers, manifest schema) is identical. The
+section text and exercise spec MUST reference real files / symbols /
+patterns from this repo — test mode is a minimal real run, not a stock
+template.
 
 ## What this skill does NOT produce
 

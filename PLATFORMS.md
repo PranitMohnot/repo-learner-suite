@@ -40,6 +40,66 @@ loaded at session start, full content fetched on demand. This differs
 enough from the "always-loaded SKILL.md" model that some adaptation work
 is needed. If you want this, file an issue.
 
+## Languages
+
+Python is currently the only supported notebook language, but the suite
+is built around a language-adapter contract so adding more is a localized
+change rather than a refactor. The orchestrator auto-detects the repo's
+language (`.py` / `pyproject.toml` / `requirements.txt` → python) and
+persists `repo.language` to `learn/internals/.config.json`. Downstream
+skills read it; the analyzer itself is language-agnostic.
+
+### The adapter boundary
+
+Each supported language is described by a `LanguageProfile` in
+[`exercise-gen/scripts/scaffold_notebook.py`](exercise-gen/scripts/scaffold_notebook.py).
+The profile is *only* irreducible plumbing — things the agent cannot
+reasonably infer at cell-generation time:
+
+| Field | Why it's in the profile |
+|---|---|
+| `kernel_name`, `kernel_display_name`, `kernel_language` | Jupyter kernelspec values; concrete strings the agent can't guess |
+| `env_managers` (dict: name → install command) | Shell commands that must match what users actually have installed |
+| `default_env_manager` | Picked when nothing else is specified |
+| (function) env-file generator | Writes `requirements.txt` and the language's equivalents |
+| (in `reconcile.py`) forbidden manager set | Names to ban in user-facing artifacts when `env_manager` is different |
+| (in `repo-learner/SKILL.md`) detection row | File extensions + project markers for auto-detection |
+
+Things deliberately NOT in the profile:
+
+- Setup / validation / scaffold idioms. The agent knows these from its
+  training; enumerating them grows linearly per language without value.
+- Allow / forbidden package lists for the "self-contained" rule. Same
+  reason — the agent knows what's heavy or platform-specific for each
+  ecosystem.
+
+This keeps profiles tiny (~30 lines per language) and avoids paternalizing
+the model. It also means each new language is a localized change.
+
+### Adding a new language
+
+1. Add a branch to `generate_env_files` in `scaffold_notebook.py` that
+   writes the language's env file(s).
+2. Add a `LanguageProfile` entry to `LANGUAGE_PROFILES`.
+3. Add the language to the detection table in `repo-learner/SKILL.md`.
+4. Add forbidden package-manager names to `reconcile.py`'s
+   `PACKAGE_MANAGERS`.
+
+That's it. Don't add per-language prose to skill files — let the agent's
+training carry the idioms.
+
+When `LANGUAGE_PROFILES` grows past ~3 languages, promote to YAML files
+under `language-profiles/<name>.yaml` loaded at startup. The interface
+above is already the schema.
+
+### Polyglot repos
+
+The run-wide `--language` flag (or `.config.json:repo.language`) sets the
+notebook default. Individual `ExerciseSpec` entries can override
+`language` to mix kernels in one curriculum (when multiple language
+profiles exist). Use sparingly; mixed-kernel curricula are harder to
+follow than single-language ones.
+
 ## Gemini frontmatter overlay
 
 Gemini wants an `allowed-tools:` list in skill frontmatter — a permission

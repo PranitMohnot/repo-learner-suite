@@ -3,10 +3,14 @@
 A suite of agent skills for deeply learning unfamiliar codebases through
 structured curricula, exercises, Socratic tutoring, and adaptive quizzes.
 
-Primary target is Claude Code. Codex CLI is supported via a flag on
-`install.sh` — see [PLATFORMS.md](PLATFORMS.md) for the mapping. Gemini CLI
-is not yet supported (its skill activation model differs enough to need
-real work).
+**Agents:** Claude Code, Codex CLI, Gemini CLI — one source, install per
+platform. See [PLATFORMS.md](PLATFORMS.md) for the mapping.
+
+**Languages:** Python today, with a language-adapter contract for adding
+more (see [PLATFORMS.md](PLATFORMS.md) → Languages). The orchestrator
+auto-detects the repo (`.py` / `pyproject.toml` / `requirements.txt` →
+python) and notebooks emit with the matching kernel + env-file
+scaffolding.
 
 ## Skills
 

@@ -49,6 +49,66 @@ class CellSpec:
     metadata: dict = field(default_factory=dict)
 
 
+# ----------------------------------------------------------------------------
+# Language adapters
+# ----------------------------------------------------------------------------
+#
+# Each supported language registers a LanguageProfile here. The profile holds
+# only irreducible plumbing — things the agent cannot reasonably infer at cell-
+# generation time (kernel names, env file formats, install commands).
+#
+# Things deliberately NOT in the profile:
+#   - Validation / setup / scaffold idioms — the agent knows these from its
+#     training on the language.
+#   - "Self-contained" allow / deny lists — same. Telling the agent that
+#     framework X is "heavy" or that library Y is "standard" is paternalizing —
+#     trust the agent's training to recognize idioms per ecosystem.
+#
+# Adding a new language (e.g. cpp):
+#   1. Implement a `write_env_files_<lang>(specs, output_dir)` function.
+#   2. Add a LanguageProfile entry to LANGUAGE_PROFILES below.
+#   3. Add the language to repo-learner/SKILL.md's detection table.
+#   4. Add forbidden package-manager names to reconcile.py's PACKAGE_MANAGERS.
+#
+# When this list grows past ~3 languages, promote LANGUAGE_PROFILES to YAML
+# files under `language-profiles/<name>.yaml` and load them at startup.
+
+@dataclass(frozen=True)
+class LanguageProfile:
+    name: str                            # canonical, lowercase
+    kernel_name: str                     # jupyter kernelspec.name
+    kernel_display_name: str             # jupyter kernelspec.display_name
+    kernel_language: str                 # jupyter kernelspec.language
+    env_managers: dict[str, str]         # manager-name → install command snippet
+    default_env_manager: str             # used when none specified
+
+    @property
+    def code_language(self) -> str:
+        # Back-compat alias for older callers; same as kernel_language.
+        return self.kernel_language
+
+
+LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
+    "python": LanguageProfile(
+        name="python",
+        kernel_name="python3",
+        kernel_display_name="Python 3",
+        kernel_language="python",
+        env_managers={
+            "uv":     "uv venv && uv sync",
+            "pip":    "python -m venv .venv && source .venv/bin/activate\npip install -r requirements.txt",
+            "poetry": "poetry install",
+            "conda":  "conda env create -f environment.yml && conda activate learn",
+        },
+        default_env_manager="pip",
+    ),
+    # To add a new language: see the "Adding a new language" comment block
+    # above. The contract is intentionally tiny — register a profile here,
+    # add a generator branch in generate_env_files, add forbidden managers
+    # to reconcile.py, and add a detection row in repo-learner/SKILL.md.
+}
+
+
 @dataclass
 class ExerciseSpec:
     """Full specification for one exercise notebook."""
@@ -67,18 +127,29 @@ class ExerciseSpec:
     stretch_goal: Optional[str] = None
     solution_code: str = ""
     solution_explanation: str = ""
-    dependencies: list[str] = field(default_factory=list)  # pip packages
-    kernel_name: str = "python3"            # registered Jupyter kernel name
-    kernel_display_name: str = "Python 3"   # shown in kernel picker
+    dependencies: list[str] = field(default_factory=list)  # pkg names
+    language: str = "python"                # see LANGUAGE_PROFILES
+    kernel_name: str = ""                   # blank → derived from language
+    kernel_display_name: str = ""           # blank → derived from language
+
+    def resolved_kernel(self) -> tuple[str, str, str]:
+        """Returns (kernel_name, kernel_display_name, code_language)."""
+        p = LANGUAGE_PROFILES.get(self.language, LANGUAGE_PROFILES["python"])
+        return (
+            self.kernel_name or p.kernel_name,
+            self.kernel_display_name or p.kernel_display_name,
+            p.kernel_language,
+        )
 
 
 def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
     """Generate a .ipynb file from an ExerciseSpec. Returns the output path."""
     nb = new_notebook()
+    kname, kdisplay, clang = spec.resolved_kernel()
     nb.metadata.kernelspec = {
-        "display_name": spec.kernel_display_name,
-        "language": "python",
-        "name": spec.kernel_name,
+        "display_name": kdisplay,
+        "language": clang,
+        "name": kname,
     }
 
     # Title and context
@@ -188,47 +259,43 @@ def emit_validation_stub(spec: ExerciseSpec, validation_dir: str) -> str:
     return str(out)
 
 
-def generate_requirements(specs: list[ExerciseSpec], output_path: str) -> str:
-    """Generate requirements.txt from all exercise specs."""
-    all_deps = set()
-    for spec in specs:
-        all_deps.update(spec.dependencies)
+def generate_env_files(
+    specs: list[ExerciseSpec],
+    output_dir: Path,
+    language: str = "python",
+    project_name: str = "learn-exercises",
+) -> list[str]:
+    """Generate language-appropriate environment files.
 
-    all_deps.add("jupyter")
-    all_deps.add("nbformat")
+    Python: writes requirements.txt + pyproject.toml.
+    To add a new language: add a branch here that writes the language's
+    env file(s) and returns their paths. See the "Adding a new language"
+    comment block at the top of this module.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    all_deps = sorted({d for s in specs for d in s.dependencies})
 
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w") as f:
-        for dep in sorted(all_deps):
-            f.write(dep + "\n")
+    # Python (default)
+    py_deps = set(all_deps) | {"jupyter", "nbformat"}
+    req_path = output_dir / "requirements.txt"
+    req_path.write_text("\n".join(sorted(py_deps)) + "\n")
+    written.append(str(req_path))
 
-    return str(output)
-
-
-def generate_pyproject(specs: list[ExerciseSpec], output_path: str, project_name: str = "learn-exercises") -> str:
-    """Generate a minimal pyproject.toml for the exercise notebooks."""
-    all_deps = set()
-    for spec in specs:
-        all_deps.update(spec.dependencies)
-    all_deps.add("jupyter")
-
-    deps_str = ", ".join(f'"{d}"' for d in sorted(all_deps))
-
-    content = f"""[project]
-name = "{project_name}"
-version = "0.1.0"
-description = "Exercise notebooks for learning the codebase"
-requires-python = ">=3.10"
-dependencies = [{deps_str}]
-"""
-
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w") as f:
-        f.write(content)
-
-    return str(output)
+    deps_str = ", ".join(f'"{d}"' for d in sorted(py_deps))
+    pyproj = (
+        f'[project]\n'
+        f'name = "{project_name}"\n'
+        f'version = "0.1.0"\n'
+        f'description = "Exercise notebooks for learning the codebase"\n'
+        f'requires-python = ">=3.10"\n'
+        f'dependencies = [{deps_str}]\n'
+    )
+    pyproj_path = output_dir / "pyproject.toml"
+    pyproj_path.write_text(pyproj)
+    written.append(str(pyproj_path))
+    return written
 
 
 def generate_readme(
@@ -236,25 +303,28 @@ def generate_readme(
     output_path: str,
     env_manager: str = "pip",
     kernel_name: str = "python3",
+    language: str = "python",
 ) -> str:
-    """Generate README.md with exercise sequence and descriptions.
+    """Generate README.md with exercise sequence + setup instructions.
 
     Only references the user's chosen env_manager. Never lists alternatives —
-    the .config.json env_manager is source of truth.
+    the .config.json env_manager is the source of truth.
     """
-    setup_commands = {
-        "uv":     "uv venv && uv sync",
-        "pip":    "python -m venv .venv && source .venv/bin/activate\npip install -r requirements.txt",
-        "poetry": "poetry install",
-        "conda":  "conda env create -f environment.yml && conda activate learn",
-    }
-    install_cmd = setup_commands.get(env_manager, setup_commands["pip"])
+    profile = LANGUAGE_PROFILES.get(language, LANGUAGE_PROFILES["python"])
+    install_cmd = profile.env_managers.get(env_manager) or profile.env_managers[profile.default_env_manager]
+
+    # Python kernel registration hint. Other languages (when added) should
+    # branch here and supply their own one-time-setup hint.
+    kernel_hint = (
+        f"# Register this venv as a Jupyter kernel (one-time):\n"
+        f"python -m ipykernel install --user --name={kernel_name}"
+    )
+
     setup_block = (
         "```bash\n"
         f"{install_cmd}\n"
         "\n"
-        f"# Register this venv as a Jupyter kernel (one-time):\n"
-        f"python -m ipykernel install --user --name={kernel_name}\n"
+        f"{kernel_hint}\n"
         "```\n"
     )
 
@@ -318,8 +388,9 @@ def from_json(spec_path: str) -> list[ExerciseSpec]:
             solution_code=item.get("solution_code", ""),
             solution_explanation=item.get("solution_explanation", ""),
             dependencies=item.get("dependencies", []),
-            kernel_name=item.get("kernel_name", "python3"),
-            kernel_display_name=item.get("kernel_display_name", "Python 3"),
+            language=item.get("language", "python"),
+            kernel_name=item.get("kernel_name", ""),
+            kernel_display_name=item.get("kernel_display_name", ""),
         ))
 
     return specs
@@ -331,13 +402,28 @@ if __name__ == "__main__":
     parser.add_argument("--spec", required=True, help="Path to exercise spec JSON")
     parser.add_argument("--output", required=True, help="Output directory for notebooks (learn/notebooks/)")
     parser.add_argument("--validation-dir", help="Directory for validation_report.json stubs (default: ../internals/validation/)")
-    parser.add_argument("--env-manager", default="pip", choices=["uv", "pip", "poetry", "conda"], help="Package manager for README.md")
-    parser.add_argument("--kernel-name", default="python3", help="Jupyter kernel name (used in README.md install hint)")
+    parser.add_argument("--language", default="python", choices=list(LANGUAGE_PROFILES),
+                        help="Notebook language (default: python). Individual specs can override.")
+    parser.add_argument("--env-manager", default="",
+                        help="Package manager for the notebooks/ README. Defaults per language.")
+    parser.add_argument("--kernel-name", default="",
+                        help="Override Jupyter kernel name (default: derived from --language).")
     args = parser.parse_args()
 
     specs = from_json(args.spec)
     output_dir = Path(args.output)
     validation_dir = Path(args.validation_dir) if args.validation_dir else output_dir.parent / "internals" / "validation"
+
+    profile = LANGUAGE_PROFILES[args.language]
+    if not args.env_manager:
+        args.env_manager = profile.default_env_manager
+    if not args.kernel_name:
+        args.kernel_name = profile.kernel_name
+
+    # Apply the run-wide language to any specs that left it blank.
+    for spec in specs:
+        if not spec.language:
+            spec.language = args.language
 
     for spec in specs:
         filename = f"exercise-{spec.number:02d}-{slugify(spec.title)}.ipynb"
@@ -346,7 +432,11 @@ if __name__ == "__main__":
         print(f"Generated: {path}")
         print(f"  Stub:    {stub}")
 
-    generate_requirements(specs, output_dir / "requirements.txt")
-    generate_pyproject(specs, output_dir / "pyproject.toml")
-    generate_readme(specs, output_dir / "README.md", env_manager=args.env_manager, kernel_name=args.kernel_name)
-    print(f"\nGenerated {len(specs)} notebooks in {output_dir}/")
+    generate_env_files(specs, output_dir, language=args.language)
+    generate_readme(
+        specs, output_dir / "README.md",
+        env_manager=args.env_manager,
+        kernel_name=args.kernel_name,
+        language=args.language,
+    )
+    print(f"\nGenerated {len(specs)} notebooks in {output_dir}/ ({args.language})")

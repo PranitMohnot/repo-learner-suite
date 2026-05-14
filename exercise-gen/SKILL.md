@@ -215,7 +215,37 @@ spec. Main agent runs a stitcher pass after: dedupe setup code, verify
 cross-references, lint filenames. Below the threshold, generate
 sequentially.
 
-#### Stage 4b: Validation (MANDATORY — two channels)
+#### Stage 4b: Env files
+
+Before validation can run, the notebooks need installable env files.
+
+- Read `learn/internals/.config.json` for `user.env_manager` (and
+  `repo.language`). Never mention any other manager in user-facing files.
+- Call `scaffold_notebook.py`'s `generate_env_files(specs, output_dir,
+  language=...)`. For Python: writes `requirements.txt` + `pyproject.toml`.
+  Adding a language extends `LANGUAGE_PROFILES` and the corresponding
+  generator branch.
+
+#### Stage 4c: Env install (MANDATORY)
+
+Run the user's chosen install command before any validation. The previous
+pipeline implicitly required this but never executed it — the result was
+nbconvert validation either skipping silently or failing on missing deps.
+
+1. Look up the install command:
+   `LANGUAGE_PROFILES[repo.language].env_managers[user.env_manager]`.
+2. Run it via the Bash tool in `learn/notebooks/`. Use a generous timeout
+   (60–300s for a fresh project). Stream output so the user sees progress.
+3. If it fails, diagnose:
+   - Network issue → retry once, then surface to the user.
+   - Missing system dep (e.g. compiler, system library) → tell the user
+     specifically what's missing, with the platform-specific install
+     command.
+   - Version conflict → revisit `dependencies` in the manifest; loosen
+     pins or substitute.
+   Don't silently skip — Stage 4d needs the env to exist.
+
+#### Stage 4d: Validation (MANDATORY — two channels)
 
 `scaffold_notebook.py` emits a `learn/internals/validation/exercise-NN.validation.json`
 stub per notebook. Both channels must fill it in:
@@ -284,7 +314,7 @@ manifest: `status: validated`.
 The orchestrator's reconciliation pass will refuse to finish if any
 `validation_report.json` is empty or marks failure. Do not skip this stage.
 
-#### Stage 4c: Insertion
+#### Stage 4e: Insertion
 
 For each entry with `status: validated`, edit `learn/curriculum.md`:
 
@@ -305,20 +335,16 @@ Update the manifest: `status: inserted`.
 You MUST NOT touch any other line. The marker is invariant: leave it in
 place above the inserted content.
 
-### Stage 5: Notebook Environment Files
+### Stage 5: Notebook README
 
-After all entries are `inserted`:
+After all entries are `inserted`, generate `learn/notebooks/README.md`:
+setup instructions leading with the detected env_manager (from
+`.config.json`), plus the Jupyter kernel registration hint appropriate
+to the language (for Python: `python -m ipykernel install ...`).
 
-- Read `learn/internals/.config.json` for the user's `env_manager`. Never
-  mention any other manager in user-facing files.
-- Generate `learn/notebooks/requirements.txt` (always).
-- Generate `learn/notebooks/pyproject.toml` (always — minimal, with the
-  exercise deps).
-- Generate `learn/notebooks/README.md`: setup instructions leading with
-  the detected manager, plus how to register the venv as a Jupyter kernel:
-  ```
-  python -m ipykernel install --user --name=learn-<project>
-  ```
+The env files (`requirements.txt` + `pyproject.toml` for Python; other
+files when additional languages are added) were generated in Stage 4b;
+this stage only writes the README that points at them.
 
 ## Light mode
 
@@ -330,38 +356,127 @@ Comprehensive mode (the default) is unaffected.
 - **Selection (Stage 2):** select 3–5 exercises instead of 8–12. Skew toward
   high-value `use` and `modify` exercises tied to Phase 1; drop `compare`
   and most `architectural` candidates.
-- **Validation (Stage 4b):** skip Channel 1 (mock-student validation).
+- **Validation (Stage 4d):** skip Channel 1 (mock-student validation).
   Keep Channel 2 (nbconvert execute) — it's cheap and catches the real
   env bugs. Still write the `validation_report.json` with
   `validator_passed: true` and a `validator_skipped_reason: "light mode"`
   field so reconciliation passes.
 
+Stage 4c (env install) still runs in Light mode — without it, the
+nbconvert check in Stage 4d cannot run.
+
 Subagent fan-out, marker discipline, manifest insertion, and reconciliation
 are identical to comprehensive mode.
 
-## Self-contained notebook rule
+## Test mode
 
-Notebooks must be runnable with ONLY the library under study + standard
-scientific Python (numpy, matplotlib, scipy). NO simulation environments
-(PyBullet, MuJoCo, pygame, Isaac), NO GUI frameworks, NO heavy optional
-dependencies. If a working example needs sim, synthesize the state in-
-notebook or run Euler integration with matplotlib for visualization.
+If `.config.json:tuning.mode == "test"`, run a smoke-test variant. The
+output directory is `learn_test/`; all paths shift accordingly. Light
+mode's behavior applies on top (depth is forced to `light` in test mode).
+
+- **Stages 1–2 (Mining + Selection):** skipped entirely. repo-analyzer's
+  manifest already contains the 1 entry in test mode. Read it directly.
+- **Stage 3 (Scaffolding):** expand the manifest entry into a full
+  `ExerciseSpec` as usual — design setup / walkthrough / your-turn /
+  scaffold / validation / solution cells against the real source files
+  the analyzer cited.
+- **Stage 4a (Generation):** generate 1 notebook. No subagent fan-out
+  (1 < 4 threshold anyway).
+- **Stage 4b (Env files):** emit normally.
+- **Stage 4c (Env install):** MANDATORY. This is one of the main things
+  test mode is meant to catch — a freshly-detected env_manager not
+  actually working on the user's platform.
+- **Stage 4d (Validation):** Channel 1 (mock-student) is SKIPPED (Light
+  mode behavior). Channel 2 (nbconvert) runs against the 1 notebook.
+  Set `validator_skipped_reason: "light mode"` in the report.
+- **Stage 4e (Insertion):** insert into the 1 section's exercise marker.
+- **Stage 5 (Notebook README):** emit normally.
+
+Test mode is repo-dependent throughout. The 1 exercise's setup cell, task
+description, scaffold, validation, and solution must all reference real
+symbols and files from the codebase. The point is to verify the adapter
++ pipeline shape produces a working artifact for this codebase — not to
+produce a stock template.
+
+## Dependency selection — reason about platform compatibility
+
+Notebooks must run on the *user's* system, not on an idealized one. There
+is no blocklist of libraries — a library that's fine on Linux x86 may be
+broken on Apple Silicon, and vice versa. Reason about the specific
+combination before including any dependency.
+
+Before adding a dep to a notebook's setup cell:
+
+1. Read `user.platform` from `learn/internals/.config.json` (set by the
+   orchestrator at Step 0 — e.g. `macos-arm64`, `linux-x86_64`,
+   `windows-x86_64`).
+2. Reason about whether the dep will install and run on that platform.
+   Concrete failure modes worth checking:
+   - CUDA-only libraries on CPU systems
+   - Apple Silicon compatibility issues (libraries shipping x86-only
+     wheels, sims with no arm64 binaries, etc.)
+   - Linux-specific sim/UI components on Mac or Windows
+   - System libraries that need a compiler toolchain the user may not have
+3. If the dep is problematic on this platform:
+   - Prefer a lighter substitute that works on the user's platform
+     (e.g. visualize state with the language's plotting library instead
+     of importing a sim engine).
+   - Or synthesize the case in-notebook from baseline utilities
+     (e.g. Euler integration instead of a physics engine).
+   - If neither is feasible, document the limitation in the notebook's
+     title cell and skip the exercise rather than ship something the
+     user can't run.
+
+When uncertain about platform compatibility, ask via AskUserQuestion
+rather than guess.
+
+There is no per-language allow/deny list. The model knows the platform
+gotchas for each ecosystem from its training. The point of this rule is
+that "library X is heavy" is not a useful framing — "library X breaks on
+the user's specific platform" is.
+
+## Language conventions
+
+Read `learn/internals/.config.json:repo.language` before generating cells.
+Use the language's idiomatic patterns for:
+
+- **Setup cell:** load dependencies in the language's standard way.
+- **Validation cell:** assert each expected property using the language's
+  idiomatic assertion mechanism. End with one success-confirmation line.
+- **Scaffold stubs:** return nothing / raise the language's standard
+  "not implemented" signal so the cell parses but fails until completed.
+- **Function signatures, naming, assignment, comments:** follow the
+  language's conventions.
+
+The notebook plumbing (kernel name, env-file format, env-manager install
+commands) is handled by `scripts/scaffold_notebook.py`'s `LANGUAGE_PROFILES`
+table — that's the adapter layer. This skill stays language-agnostic at
+the prose level.
+
+### Polyglot support
+
+The run-wide `--language` flag sets the default. Individual `ExerciseSpec`
+entries can override `language` to mix kernels in one curriculum (e.g. a
+Python project with a C++ extension where one exercise builds the
+extension). Set `spec.language` explicitly when overriding; otherwise the
+run-wide default applies.
 
 ## Quality Checklist
 
-After Stage 4b for every notebook, confirm:
+After Stage 4d (validation) for every notebook, confirm:
 
-- [ ] Setup cell runs without error.
+- [ ] Setup cell runs without error on the user's platform.
 - [ ] Every guided cell runs and produces visible output.
 - [ ] Scaffold cells parse without syntax errors.
 - [ ] Validation cells pass when given the solution.
 - [ ] Early "use" exercises are completable from the walkthrough alone.
 - [ ] Exercise order has no forward dependencies.
-- [ ] Notebook is self-contained (no sim envs, no GUI frameworks).
+- [ ] Every dependency was evaluated for platform compatibility before
+      inclusion (no library known-broken on `user.platform` slipped in).
 - [ ] Ambiguity ≠ difficulty: instructions are specific.
 - [ ] Solution is a runnable code cell with `source_hidden` set.
 
-After Stage 4c for the manifest:
+After Stage 4e (insertion) for the manifest:
 
 - [ ] Every entry has `status: inserted`.
 - [ ] No `pending` placeholders remain in curriculum.md.
