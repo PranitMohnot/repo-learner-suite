@@ -165,65 +165,72 @@ def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
         prereq_links = ", ".join(spec.prerequisites)
         prereq_text = f"\n\n**Prerequisites:** {prereq_links}"
 
-    nb.cells.append(new_markdown_cell(
+    # Each cell gets a `role:<name>` tag in metadata so check_executed_notebook.py
+    # can classify outcomes (env-health check after nbconvert --execute).
+    def _tag(cell, role):
+        tags = cell.metadata.setdefault("tags", [])
+        tags.append(f"role:{role}")
+        return cell
+
+    nb.cells.append(_tag(new_markdown_cell(
         f"# Exercise {spec.number}: {spec.title}\n\n"
         f"**Goal:** {spec.goal}\n\n"
         f"**Type:** {spec.exercise_type} · "
         f"**Estimated time:** ~{spec.estimated_minutes} minutes"
         f"{context_text}"
         f"{prereq_text}"
-    ))
+    ), "title"))
 
     # Setup cell
     if spec.setup_code:
-        nb.cells.append(new_markdown_cell("## Setup\n\nRun this cell first to load dependencies."))
-        nb.cells.append(new_code_cell(spec.setup_code))
+        nb.cells.append(_tag(new_markdown_cell("## Setup\n\nRun this cell first to load dependencies."), "setup-header"))
+        nb.cells.append(_tag(new_code_cell(spec.setup_code), "setup"))
 
     # Guided walkthrough cells — no synthetic "Walkthrough" header; the spec's
     # own markdown cells frame the narrative against curriculum.md context.
     for cell_spec in spec.guided_cells:
         if cell_spec.cell_type == "markdown":
-            nb.cells.append(new_markdown_cell(cell_spec.source))
+            nb.cells.append(_tag(new_markdown_cell(cell_spec.source), "guided-md"))
         else:
-            nb.cells.append(new_code_cell(cell_spec.source))
+            nb.cells.append(_tag(new_code_cell(cell_spec.source), "guided-code"))
 
     # Task description
-    nb.cells.append(new_markdown_cell(
+    nb.cells.append(_tag(new_markdown_cell(
         f"## Your turn\n\n{spec.task_description}"
-    ))
+    ), "your-turn"))
 
     # Scaffold cell
     if spec.scaffold_code:
-        nb.cells.append(new_code_cell(spec.scaffold_code))
+        nb.cells.append(_tag(new_code_cell(spec.scaffold_code), "scaffold"))
 
     # Validation cell
     if spec.validation_code:
-        nb.cells.append(new_markdown_cell(
+        nb.cells.append(_tag(new_markdown_cell(
             "## Check your work\n\nRun the cell below to validate your solution."
-        ))
-        nb.cells.append(new_code_cell(spec.validation_code))
+        ), "validation-header"))
+        nb.cells.append(_tag(new_code_cell(spec.validation_code), "validation"))
 
     # Stretch goal
     if spec.stretch_goal:
-        nb.cells.append(new_markdown_cell(
+        nb.cells.append(_tag(new_markdown_cell(
             f"## Stretch goal (optional)\n\n{spec.stretch_goal}"
-        ))
-        nb.cells.append(new_code_cell("# Your stretch goal code here\n"))
+        ), "stretch-header"))
+        nb.cells.append(_tag(new_code_cell("# Your stretch goal code here\n"), "stretch"))
 
     # Solution stays as a runnable code cell. source_hidden collapses it in
     # JupyterLab; VS Code and classic Jupyter show it expanded. Acceptable
     # trade-off — solutions must be runnable. See suite TODO.md for the
     # cross-viewer collapse question.
     if spec.solution_code:
-        nb.cells.append(new_markdown_cell(
+        nb.cells.append(_tag(new_markdown_cell(
             "---\n\n## Solution\n\nTry the exercise before expanding."
-        ))
-        solution_cell = new_code_cell(spec.solution_code)
+        ), "solution-header"))
+        solution_cell = _tag(new_code_cell(spec.solution_code), "solution")
         solution_cell.metadata["jupyter"] = {"source_hidden": True}
         nb.cells.append(solution_cell)
 
         if spec.solution_explanation:
-            explanation_cell = new_markdown_cell(spec.solution_explanation)
+            explanation_cell = _tag(new_markdown_cell(spec.solution_explanation), "solution-explanation")
             explanation_cell.metadata["jupyter"] = {"source_hidden": True}
             nb.cells.append(explanation_cell)
 

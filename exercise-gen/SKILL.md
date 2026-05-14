@@ -319,24 +319,34 @@ the *environment*, not solution correctness — that's Channel 1's job. In
 the venv installed by Stage 4c, run:
 
 ```
-jupyter nbconvert --to notebook --execute --allow-errors learn/notebooks/exercise-NN-*.ipynb
+jupyter nbconvert --to notebook --execute --allow-errors --output exercise-NN.executed learn/notebooks/exercise-NN-*.ipynb
 ```
 
 `--allow-errors` is required. The scaffold cell intentionally raises
-`NotImplementedError` (Python) or the language equivalent — it's a
-placeholder for the learner. Likewise the validation cell will fail because
-the scaffold isn't filled in. **Those failures are expected** and do NOT
-fail this check.
+`NotImplementedError` — it's a placeholder for the learner. The
+validation cell will also fail because the scaffold isn't filled in.
+**Those failures are expected** and must NOT fail this check.
 
-What you actually verify after the run: inspect the executed notebook's
-cell outputs and confirm:
-- The setup cell ran without error (imports succeeded).
-- Every guided walkthrough cell ran without error.
-- The only cells with errors are the scaffold and validation cells.
+Then classify cell outcomes with the deterministic helper:
 
-If a setup or guided cell errored, the env is broken. Fix the underlying
-issue (missing dep, wrong wheel for the platform, OS-specific code path) —
-don't paper over it. Solution correctness is Channel 1's job, not this one.
+```
+python <SKILL_DIR>/scripts/check_executed_notebook.py \
+    learn/notebooks/exercise-NN.executed.ipynb \
+    learn/internals/validation/exercise-NN.nbconvert.json
+```
+
+The helper reads each cell's `role:*` metadata tag (set by
+`scaffold_notebook.py` at generation time) and emits a per-cell verdict.
+Exit code 0 means env-healthy; nonzero means at least one
+expected-success cell errored. Drop the JSON it produces straight into
+`validation_report.json` under `nbconvert_log`.
+
+If env-healthy: set `nbconvert_passed: true` in `validation_report.json`.
+
+If env-unhealthy (setup or guided-code cell errored): the env is broken.
+Fix the underlying issue (missing dep, wrong wheel for the platform,
+OS-specific code path) and re-run. Don't paper over it. Solution
+correctness is Channel 1's job, not this one.
 
 When both channels write to `validation_report.json` and pass, update the
 manifest: `status: validated`.
