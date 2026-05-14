@@ -57,7 +57,13 @@ exercise scaffolding, and environment setup — they cannot be auto-detected.
    poetry.lock → poetry, requirements.txt → pip). Show detected default:
    "I detected `uv.lock` — use uv?" Options: `[uv / pip / conda / other]`.
 
-4. **Open-ended catch-all.** "Anything else I should know? (learning goals,
+4. **Depth.** "Comprehensive (default — deep read, 8–12 exercises, full
+   QA) or Light (~1/4 cost — leaner curriculum, 3–5 exercises, skips
+   mock-student validation)?" Persist as `tuning.depth: comprehensive | light`
+   in `.config.json`. Default to `comprehensive` if the user accepts
+   defaults.
+
+5. **Open-ended catch-all.** "Anything else I should know? (learning goals,
    time constraints, areas of interest)" — free text, optional.
 
 **Rules:**

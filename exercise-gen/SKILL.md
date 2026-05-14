@@ -314,6 +314,25 @@ After all entries are `inserted`:
   python -m ipykernel install --user --name=learn-<project>
   ```
 
+## Light mode
+
+If `.config.json:tuning.depth == "light"`, three things change.
+Comprehensive mode (the default) is unaffected.
+
+- **Candidates (Stage 1):** mine 5–8 candidates instead of 12–18. Be more
+  ruthless about pre-filtering.
+- **Selection (Stage 2):** select 3–5 exercises instead of 8–12. Skew toward
+  high-value `use` and `modify` exercises tied to Phase 1; drop `compare`
+  and most `architectural` candidates.
+- **Validation (Stage 4b):** skip Channel 1 (Haiku-as-student). Keep
+  Channel 2 (nbconvert execute) — it's cheap and catches the real env
+  bugs. Still write the `validation_report.json` with `haiku_passed: true`
+  and a `haiku_skipped_reason: "light mode"` field so reconciliation
+  passes.
+
+Subagent fan-out, marker discipline, manifest insertion, and reconciliation
+are identical to comprehensive mode.
+
 ## Self-contained notebook rule
 
 Notebooks must be runnable with ONLY the library under study + standard
