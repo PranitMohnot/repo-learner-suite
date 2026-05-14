@@ -1,36 +1,67 @@
 #!/bin/bash
-# Install (or update) repo-learner skill suite for Claude Code
+# Install (or update) repo-learner skill suite.
 #
 # Usage:
-#   ./install.sh            # Install/update globally (default)
-#   ./install.sh --local    # Install to current project only
+#   ./install.sh                    # Claude Code, global    (~/.claude/skills/)
+#   ./install.sh --local            # Claude Code, project   (./.claude/skills/)
+#   ./install.sh --codex            # Codex CLI, global      (~/.agents/skills/)
+#   ./install.sh --codex --local    # Codex CLI, project     (./.agents/skills/)
 #
-# To update: just re-run this script. It overwrites all skill files.
+# See PLATFORMS.md for the platform mapping. Re-run to update — overwrites
+# skill files only; user-generated learn/ directories are never touched.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS="repo-learner repo-analyzer exercise-gen code-tutor code-quiz"
 
-if [ "$1" = "--local" ]; then
-    BASE=".claude/skills"
-    echo "Installing repo-learner suite to project at $BASE/..."
+PLATFORM="claude"
+LOCAL=false
+for arg in "$@"; do
+    case "$arg" in
+        --codex)  PLATFORM="codex" ;;
+        --local)  LOCAL=true ;;
+        -h|--help)
+            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "Unknown arg: $arg" >&2
+            echo "Run with --help for usage." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Resolve install roots based on platform + scope.
+if [ "$PLATFORM" = "codex" ]; then
+    if $LOCAL; then
+        SKILLS_BASE=".agents/skills"
+        CMD_DIR=""  # Codex has no documented slash-command surface
+    else
+        SKILLS_BASE="$HOME/.agents/skills"
+        CMD_DIR=""
+    fi
+    echo "Installing for Codex CLI to $SKILLS_BASE/..."
 else
-    BASE="$HOME/.claude/skills"
-    echo "Installing repo-learner suite globally to $BASE/..."
+    if $LOCAL; then
+        SKILLS_BASE=".claude/skills"
+        CMD_DIR=".claude/commands"
+    else
+        SKILLS_BASE="$HOME/.claude/skills"
+        CMD_DIR="$HOME/.claude/commands"
+    fi
+    echo "Installing for Claude Code to $SKILLS_BASE/..."
 fi
 
 # Detect fresh install vs update
-if [ -f "$BASE/repo-learner/SKILL.md" ]; then
+if [ -f "$SKILLS_BASE/repo-learner/SKILL.md" ]; then
     echo "(Updating existing installation)"
-    IS_UPDATE=true
-else
-    IS_UPDATE=false
 fi
 
 for skill in $SKILLS; do
     src="$SCRIPT_DIR/$skill"
-    dst="$BASE/$skill"
+    dst="$SKILLS_BASE/$skill"
 
     if [ ! -d "$src" ]; then
         echo "  SKIP $skill (not found at $src)"
@@ -38,16 +69,13 @@ for skill in $SKILLS; do
     fi
 
     mkdir -p "$dst"
-    # Copy SKILL.md
     cp "$src/SKILL.md" "$dst/SKILL.md"
 
-    # Copy references/ if exists
     if [ -d "$src/references" ]; then
         mkdir -p "$dst/references"
         cp "$src/references/"* "$dst/references/"
     fi
 
-    # Copy scripts/ if exists
     if [ -d "$src/scripts" ]; then
         mkdir -p "$dst/scripts"
         cp "$src/scripts/"* "$dst/scripts/"
@@ -56,32 +84,46 @@ for skill in $SKILLS; do
     echo "  ✓ $skill"
 done
 
-# Install slash commands
-if [ "$1" = "--local" ]; then
-    CMD_DIR=".claude/commands"
-else
-    CMD_DIR="$HOME/.claude/commands"
+# Slash commands — Claude Code only. Codex has no equivalent surface.
+if [ -n "$CMD_DIR" ]; then
+    mkdir -p "$CMD_DIR"
+    for skill in $SKILLS; do
+        if [ -d "$SCRIPT_DIR/$skill/commands" ]; then
+            cp "$SCRIPT_DIR/$skill/commands/"*.md "$CMD_DIR/" 2>/dev/null || true
+        fi
+    done
 fi
 
-mkdir -p "$CMD_DIR"
+count=$(echo $SKILLS | wc -w | tr -d ' ')
+echo ""
+echo "Installed $count skills."
+echo ""
 
-# Generate slash commands from skill commands/ directories
-for skill in $SKILLS; do
-    if [ -d "$SCRIPT_DIR/$skill/commands" ]; then
-        cp "$SCRIPT_DIR/$skill/commands/"*.md "$CMD_DIR/" 2>/dev/null || true
-    fi
-done
+if [ "$PLATFORM" = "codex" ]; then
+    cat <<'EOF'
+Codex usage:
+  Slash commands are not installed (Codex doesn't have an equivalent surface).
+  Invoke the suite in prose:
+    "analyze this codebase"        → repo-analyzer
+    "tutor me on section 1.1"      → code-tutor
+    "quiz me on section 1.3"       → code-quiz
+    "make me exercises"            → exercise-gen
+    "help me learn this repo"      → repo-learner (orchestrator)
 
-echo ""
-echo "Installed $( echo $SKILLS | wc -w | tr -d ' ' ) skills."
-echo ""
-echo "Commands:"
-echo "  /learn analyze <path>    Analyze a codebase (expensive, thorough)"
-echo "  /learn exercises         Generate Jupyter notebook exercises"
-echo "  /learn tutor [section]   Socratic tutoring mode"
-echo "  /learn quiz [section]    Adaptive quiz"
-echo "  /learn status            Check your progress"
-echo ""
-echo "Start with:  /learn analyze ."
+See PLATFORMS.md for the full mapping and caveats.
+EOF
+else
+    cat <<'EOF'
+Commands:
+  /learn analyze <path>    Analyze a codebase (expensive, thorough)
+  /learn exercises         Generate Jupyter notebook exercises
+  /learn tutor [section]   Socratic tutoring mode
+  /learn quiz [section]    Adaptive quiz
+  /learn status            Check your progress
+
+Start with:  /learn analyze .
+EOF
+fi
+
 echo ""
 echo "To update later, re-run this script."

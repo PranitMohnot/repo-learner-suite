@@ -2,7 +2,7 @@
 """
 scaffold_notebook.py — Generate Jupyter notebooks from structured exercise specs.
 
-Usage (from Claude Code):
+Usage:
     python scaffold_notebook.py --spec exercise_spec.json --output learn/notebooks/
 
 Or import and call directly:
@@ -169,17 +169,17 @@ def emit_validation_stub(spec: ExerciseSpec, validation_dir: str) -> str:
     """Write an empty validation_report.json for this exercise.
 
     The reconciliation pass refuses to declare pipeline "done" until both
-    haiku_passed and nbconvert_passed are true. Emitting the stub at scaffold
-    time ensures the file exists for reconciliation to inspect even if a
-    validation channel crashed.
+    validator_passed and nbconvert_passed are true. Emitting the stub at
+    scaffold time ensures the file exists for reconciliation to inspect even
+    if a validation channel crashed.
     """
     report = {
         "exercise": f"{spec.number:02d}",
         "title": spec.title,
         "curriculum_section": spec.curriculum_section,
-        "haiku_passed": None,
+        "validator_passed": None,
         "nbconvert_passed": None,
-        "haiku_report": None,
+        "validator_report": None,
         "nbconvert_log": None,
     }
     out = Path(validation_dir) / f"exercise-{spec.number:02d}.validation.json"

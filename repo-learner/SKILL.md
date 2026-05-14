@@ -97,7 +97,7 @@ learn/
     ├── exercise-candidates.md
     ├── exercise-plan.md    # The manifest — see Shared Contracts below.
     ├── quiz-bank.md        # Source bank for /learn quiz (mutable)
-    └── validation/         # Per-notebook Haiku + nbconvert reports
+    └── validation/         # Per-notebook mock-student + nbconvert reports
         └── exercise-NN.validation.json
 ```
 
@@ -176,7 +176,7 @@ Field rules:
 - `status` lifecycle:
   - `planned`        — manifest entry exists, no artifact yet.
   - `scaffolded`     — notebook (or inline block) emitted; not yet validated.
-  - `validated`      — Haiku + nbconvert checks passed.
+  - `validated`      — mock-student + nbconvert checks passed.
   - `inserted`       — curriculum.md placeholder replaced with real link/block.
 - `notebook_path` is required when `emission: notebook`. Omit for inline.
 
@@ -229,7 +229,7 @@ The orchestrator refuses to declare "done" until all of:
 3. Every `notebook_path` in the manifest exists on disk and parses as valid
    `nbformat` JSON.
 4. Every notebook has a `internals/validation/exercise-NN.validation.json`
-   report with both `haiku_passed: true` and `nbconvert_passed: true`.
+   report with both `validator_passed: true` and `nbconvert_passed: true`.
 5. Artifact grep: no `<parameter>`, `<antml`, `<function`, or other tool-call
    fragments in any user-facing file (curriculum.md, curriculum.html,
    cheatsheet.md, notebooks/*.ipynb, notebooks/README.md).
@@ -241,7 +241,7 @@ silently skip.
 
 ## Silent Defaults (never ask the user about these)
 
-- Haiku validation + nbconvert execute: both always run.
+- Mock-student validation + nbconvert execute: both always run.
 - Subagent fan-out: 1 agent per notebook when exercise count > 4. Each agent
   gets the shared brief template (see `exercise-gen/references/`) + its one
   spec. Main agent runs a stitcher pass after.
@@ -256,7 +256,7 @@ silently skip.
 Run the pipeline end-to-end for the user; run QA exhaustively for yourself.
 After the initial questions, do not pause for user input unless you are
 genuinely blocked (unresolvable dependency, missing file, ambiguous
-instruction). Internal checks — Haiku validation, nbconvert execute, artifact
+instruction). Internal checks — mock-student validation, nbconvert execute, artifact
 grep, self-questioning — are part of the pipeline, not pauses. When you must
 ask, use AskUserQuestion. Prefer one question over silent guessing; prefer
 silent guessing over a low-quality default.

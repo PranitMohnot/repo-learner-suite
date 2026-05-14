@@ -205,8 +205,8 @@ def check_validation_reports(learn_dir: Path, manifest: list[dict]) -> CheckResu
         except json.JSONDecodeError as e:
             r.failures.append(f"{report_path.name}: JSON error — {e}")
             continue
-        if report.get("haiku_passed") is not True:
-            r.failures.append(f"{report_path.name}: haiku_passed != true")
+        if report.get("validator_passed") is not True:
+            r.failures.append(f"{report_path.name}: validator_passed != true")
         if report.get("nbconvert_passed") is not True:
             r.failures.append(f"{report_path.name}: nbconvert_passed != true")
     r.passed = not r.failures

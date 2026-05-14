@@ -3,8 +3,8 @@ name: exercise-gen
 description: >
   Generate Jupyter notebook exercises from a codebase analysis. Reads the
   manifest at learn/internals/exercise-plan.md, scaffolds notebooks (or short
-  inline blocks where the manifest says so), runs MANDATORY Haiku + nbconvert
-  validation, then inserts links into learn/curriculum.md at the step markers
+  inline blocks where the manifest says so), runs MANDATORY mock-student +
+  nbconvert validation, then inserts links into learn/curriculum.md at the step markers
   the analyzer placed. Trigger on "generate exercises", "make me notebooks",
   "create practice problems", "build exercises for this repo",
   "/learn exercises", or any request to create hands-on learning materials
@@ -220,8 +220,11 @@ sequentially.
 `scaffold_notebook.py` emits a `learn/internals/validation/exercise-NN.validation.json`
 stub per notebook. Both channels must fill it in:
 
-**Channel 1: Haiku-as-student (pedagogical check).** Spawn a Haiku subagent
-per notebook with this brief:
+**Channel 1: Mock-student validation (pedagogical check).** Spawn a
+fast-tier model as a mock-student subagent per notebook with this brief.
+Use the cheapest capable model available — on Claude Code, Haiku; on
+other agents, the equivalent fast tier. The point is fresh eyes, not raw
+capability.
 
 ```
 You are a student learning a new codebase. You have access to ONLY the
@@ -252,10 +255,13 @@ Output JSON:
 Fix-up rules:
 - `setup_runs: false` → fix imports/deps. Hard blocker.
 - `could_complete_without_solution: false` → walkthrough gap or ambiguity.
-- `validation_passed: false` (Haiku's approach was reasonable) → loosen
-  assertions.
+- `validation_passed: false` (mock student's approach was reasonable) →
+  loosen assertions.
 - `stuck_points` → fix missing info and ambiguity; leave genuine difficulty.
 - `solution_matches: false` → solution is wrong; fix it.
+
+When the mock student passes, set `validator_passed: true` in
+`validation_report.json` (and attach the JSON report under `validator_report`).
 
 Apply fixes silently. Only surface to the user if an exercise had to be
 cut entirely.
@@ -267,10 +273,10 @@ matching `learn/notebooks/requirements.txt`, run:
 jupyter nbconvert --to notebook --execute learn/notebooks/exercise-NN-*.ipynb
 ```
 
-This catches env mismatches that Haiku misses (a wheel missing on the
-target platform, version skew, OS-specific failures). Fix the underlying
-issue, not the symptom — if a dep is missing, add it to requirements.txt;
-if a code path is OS-specific, generalize it.
+This catches env mismatches the mock student misses (a wheel missing on
+the target platform, version skew, OS-specific failures). Fix the
+underlying issue, not the symptom — if a dep is missing, add it to
+requirements.txt; if a code path is OS-specific, generalize it.
 
 When both channels write to `validation_report.json` and pass, update the
 manifest: `status: validated`.
@@ -324,11 +330,11 @@ Comprehensive mode (the default) is unaffected.
 - **Selection (Stage 2):** select 3–5 exercises instead of 8–12. Skew toward
   high-value `use` and `modify` exercises tied to Phase 1; drop `compare`
   and most `architectural` candidates.
-- **Validation (Stage 4b):** skip Channel 1 (Haiku-as-student). Keep
-  Channel 2 (nbconvert execute) — it's cheap and catches the real env
-  bugs. Still write the `validation_report.json` with `haiku_passed: true`
-  and a `haiku_skipped_reason: "light mode"` field so reconciliation
-  passes.
+- **Validation (Stage 4b):** skip Channel 1 (mock-student validation).
+  Keep Channel 2 (nbconvert execute) — it's cheap and catches the real
+  env bugs. Still write the `validation_report.json` with
+  `validator_passed: true` and a `validator_skipped_reason: "light mode"`
+  field so reconciliation passes.
 
 Subagent fan-out, marker discipline, manifest insertion, and reconciliation
 are identical to comprehensive mode.
@@ -367,8 +373,8 @@ After Stage 4c for the manifest:
 ## Pipeline cadence
 
 Run end-to-end for the user; run QA exhaustively for yourself. Internal
-checks (candidate filtering, Haiku validation, nbconvert, artifact grep,
-self-questioning between stages) are part of the pipeline, not pauses.
+checks (candidate filtering, mock-student validation, nbconvert, artifact
+grep, self-questioning between stages) are part of the pipeline, not pauses.
 Pause only when genuinely blocked (unresolvable dep, missing file,
 ambiguous instruction the manifest can't answer). Use AskUserQuestion
 when you must ask. Prefer one question over silent guessing; prefer silent
