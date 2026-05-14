@@ -2,30 +2,42 @@
 # Install (or update) repo-learner skill suite.
 #
 # Usage:
-#   ./install.sh                    # Claude Code, global    (~/.claude/skills/)
-#   ./install.sh --local            # Claude Code, project   (./.claude/skills/)
-#   ./install.sh --codex            # Codex CLI, global      (~/.agents/skills/)
-#   ./install.sh --codex --local    # Codex CLI, project     (./.agents/skills/)
-#   ./install.sh --gemini           # Gemini CLI, global     (~/.gemini/skills/)
-#   ./install.sh --gemini --local   # Gemini CLI, project    (./.gemini/skills/)
+#   ./install.sh                       # Claude Code, global (default)
+#   ./install.sh --claude              # Claude Code, global (explicit)
+#   ./install.sh --codex               # Codex CLI, global
+#   ./install.sh --gemini              # Gemini CLI, global
+#   ./install.sh --all                 # Install to all three
+#   ./install.sh --gemini --codex      # Or combine any flags
+#   ./install.sh --local               # Per-project (append to any above)
 #
-# See PLATFORMS.md for the platform mapping. Re-run to update — overwrites
-# skill files only; user-generated learn/ directories are never touched.
+# Targets (global / --local):
+#   Claude Code  ~/.claude/skills/  /  ./.claude/skills/
+#   Codex CLI    ~/.agents/skills/  /  ./.agents/skills/
+#   Gemini CLI   ~/.gemini/skills/  /  ./.gemini/skills/
+#
+# See PLATFORMS.md for the platform mapping. Re-run to update —
+# overwrites skill files only; user-generated learn/ directories are
+# never touched.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS="repo-learner repo-analyzer exercise-gen code-tutor code-quiz"
 
-PLATFORM="claude"
+DO_CLAUDE=false
+DO_CODEX=false
+DO_GEMINI=false
 LOCAL=false
+
 for arg in "$@"; do
     case "$arg" in
-        --codex)  PLATFORM="codex" ;;
-        --gemini) PLATFORM="gemini" ;;
+        --claude) DO_CLAUDE=true ;;
+        --codex)  DO_CODEX=true ;;
+        --gemini) DO_GEMINI=true ;;
+        --all)    DO_CLAUDE=true; DO_CODEX=true; DO_GEMINI=true ;;
         --local)  LOCAL=true ;;
         -h|--help)
-            sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -36,138 +48,140 @@ for arg in "$@"; do
     esac
 done
 
-# Resolve install roots based on platform + scope.
-if [ "$PLATFORM" = "gemini" ]; then
-    if $LOCAL; then
-        SKILLS_BASE=".gemini/skills"
-        CMD_DIR=".gemini/commands"
-    else
-        SKILLS_BASE="$HOME/.gemini/skills"
-        CMD_DIR="$HOME/.gemini/commands"
-    fi
-    echo "Installing for Gemini CLI to $SKILLS_BASE/..."
-elif [ "$PLATFORM" = "codex" ]; then
-    if $LOCAL; then
-        SKILLS_BASE=".agents/skills"
-        CMD_DIR=""  # Codex has no documented slash-command surface
-    else
-        SKILLS_BASE="$HOME/.agents/skills"
-        CMD_DIR=""
-    fi
-    echo "Installing for Codex CLI to $SKILLS_BASE/..."
-else
-    if $LOCAL; then
-        SKILLS_BASE=".claude/skills"
-        CMD_DIR=".claude/commands"
-    else
-        SKILLS_BASE="$HOME/.claude/skills"
-        CMD_DIR="$HOME/.claude/commands"
-    fi
-    echo "Installing for Claude Code to $SKILLS_BASE/..."
+# Default to Claude Code when no platform flag is given.
+if ! $DO_CLAUDE && ! $DO_CODEX && ! $DO_GEMINI; then
+    DO_CLAUDE=true
 fi
 
-# Detect fresh install vs update
-if [ -f "$SKILLS_BASE/repo-learner/SKILL.md" ]; then
-    echo "(Updating existing installation)"
-fi
+install_for() {
+    local platform=$1
+    local skills_base cmd_dir
 
-for skill in $SKILLS; do
-    src="$SCRIPT_DIR/$skill"
-    dst="$SKILLS_BASE/$skill"
+    case "$platform" in
+        claude)
+            if $LOCAL; then skills_base=".claude/skills"; cmd_dir=".claude/commands"
+            else            skills_base="$HOME/.claude/skills"; cmd_dir="$HOME/.claude/commands"; fi
+            ;;
+        codex)
+            if $LOCAL; then skills_base=".agents/skills"; cmd_dir=""
+            else            skills_base="$HOME/.agents/skills"; cmd_dir=""; fi
+            ;;
+        gemini)
+            if $LOCAL; then skills_base=".gemini/skills"; cmd_dir=".gemini/commands"
+            else            skills_base="$HOME/.gemini/skills"; cmd_dir="$HOME/.gemini/commands"; fi
+            ;;
+    esac
 
-    if [ ! -d "$src" ]; then
-        echo "  SKIP $skill (not found at $src)"
-        continue
+    echo ""
+    echo "=== $platform → $skills_base/ ==="
+    if [ -f "$skills_base/repo-learner/SKILL.md" ]; then
+        echo "(updating existing installation)"
     fi
 
-    mkdir -p "$dst"
+    for skill in $SKILLS; do
+        local src="$SCRIPT_DIR/$skill"
+        local dst="$skills_base/$skill"
+        if [ ! -d "$src" ]; then
+            echo "  SKIP $skill (not found at $src)"
+            continue
+        fi
+        mkdir -p "$dst"
 
-    # Install SKILL.md. For Gemini, merge gemini.skill-meta.yaml into the
-    # frontmatter (just before the closing `---`). For other platforms,
-    # plain copy — keeps the source SKILL.md platform-neutral.
-    overlay="$src/gemini.skill-meta.yaml"
-    if [ "$PLATFORM" = "gemini" ] && [ -f "$overlay" ]; then
-        second_dashes=$(grep -n '^---$' "$src/SKILL.md" | sed -n '2p' | cut -d: -f1)
-        if [ -n "$second_dashes" ]; then
-            head -n $((second_dashes - 1)) "$src/SKILL.md" > "$dst/SKILL.md"
-            cat "$overlay" >> "$dst/SKILL.md"
-            tail -n +"$second_dashes" "$src/SKILL.md" >> "$dst/SKILL.md"
+        # SKILL.md: if a <platform>.skill-meta.yaml overlay exists, merge it
+        # into the installed file's frontmatter (just before the closing ---).
+        # Else plain copy — keeps the source SKILL.md platform-neutral.
+        local overlay="$src/$platform.skill-meta.yaml"
+        if [ -f "$overlay" ]; then
+            local second_dashes
+            second_dashes=$(grep -n '^---$' "$src/SKILL.md" | sed -n '2p' | cut -d: -f1)
+            if [ -n "$second_dashes" ]; then
+                # Use printf '%s\n' "$(<file)" idiom: strips any trailing
+                # newlines from the overlay, then emits exactly one. Avoids
+                # the closing --- getting smushed onto the last overlay line
+                # if the overlay file is missing a trailing newline.
+                head -n $((second_dashes - 1)) "$src/SKILL.md" > "$dst/SKILL.md"
+                printf '%s\n' "$(cat "$overlay")" >> "$dst/SKILL.md"
+                tail -n +"$second_dashes" "$src/SKILL.md" >> "$dst/SKILL.md"
+            else
+                cp "$src/SKILL.md" "$dst/SKILL.md"
+            fi
         else
             cp "$src/SKILL.md" "$dst/SKILL.md"
         fi
-    else
-        cp "$src/SKILL.md" "$dst/SKILL.md"
-    fi
 
-    if [ -d "$src/references" ]; then
-        mkdir -p "$dst/references"
-        cp "$src/references/"* "$dst/references/"
-    fi
-
-    if [ -d "$src/scripts" ]; then
-        mkdir -p "$dst/scripts"
-        cp "$src/scripts/"* "$dst/scripts/"
-    fi
-
-    echo "  ✓ $skill"
-done
-
-# Slash commands
-if [ -n "$CMD_DIR" ]; then
-    mkdir -p "$CMD_DIR"
-    for skill in $SKILLS; do
-        if [ -d "$SCRIPT_DIR/$skill/commands" ]; then
-            cp "$SCRIPT_DIR/$skill/commands/"*.md "$CMD_DIR/" 2>/dev/null || true
+        if [ -d "$src/references" ]; then
+            mkdir -p "$dst/references"
+            cp "$src/references/"* "$dst/references/"
         fi
+
+        if [ -d "$src/scripts" ]; then
+            mkdir -p "$dst/scripts"
+            cp "$src/scripts/"* "$dst/scripts/"
+        fi
+
+        echo "  ✓ $skill"
     done
-fi
 
-count=$(echo $SKILLS | wc -w | tr -d ' ')
-echo ""
-echo "Installed $count skills."
-echo ""
+    # Slash commands — only for platforms with a real slash surface.
+    if [ -n "$cmd_dir" ]; then
+        mkdir -p "$cmd_dir"
+        for skill in $SKILLS; do
+            if [ -d "$SCRIPT_DIR/$skill/commands" ]; then
+                cp "$SCRIPT_DIR/$skill/commands/"*.md "$cmd_dir/" 2>/dev/null || true
+            fi
+        done
+    fi
 
-if [ "$PLATFORM" = "codex" ]; then
-    cat <<'EOF'
-Codex usage:
-  Slash commands are not installed (Codex doesn't have an equivalent surface).
-  Invoke the suite in prose:
+    print_usage "$platform"
+}
+
+print_usage() {
+    local platform=$1
+    case "$platform" in
+        claude)
+            cat <<'EOF'
+
+  Slash commands installed.
+    /learn                   Smart default — picks up where you left off
+    /learn analyze <path>    Analyze a codebase (expensive, thorough)
+    /learn exercises         Generate Jupyter notebook exercises
+    /learn tutor [section]   Socratic tutoring
+    /learn quiz [section]    Adaptive quiz
+    /learn status            Progress summary
+  Start with:  /learn analyze .
+EOF
+            ;;
+        codex)
+            cat <<'EOF'
+
+  No slash commands on Codex. Invoke in prose:
     "analyze this codebase"        → repo-analyzer
     "tutor me on section 1.1"      → code-tutor
     "quiz me on section 1.3"       → code-quiz
     "make me exercises"            → exercise-gen
     "help me learn this repo"      → repo-learner (orchestrator)
-
-See PLATFORMS.md for the full mapping and caveats.
 EOF
-elif [ "$PLATFORM" = "gemini" ]; then
-    cat <<'EOF'
-Gemini usage:
-  Slash commands:
-    /learn analyze <path>    Analyze a codebase (expensive, thorough)
+            ;;
+        gemini)
+            cat <<'EOF'
+
+  Slash commands installed (same as Claude Code):
+    /learn                   Smart default
+    /learn analyze <path>    Analyze a codebase
     /learn exercises         Generate Jupyter notebook exercises
-    /learn tutor [section]   Socratic tutoring mode
+    /learn tutor [section]   Socratic tutoring
     /learn quiz [section]    Adaptive quiz
-    /learn status            Check your progress
-
-  Interactive activation:
-    Skills trigger autonomously on phrases like "help me learn this repo".
-    Use Shift+Tab to toggle between Plan and Auto modes.
-
-Start with:  /learn analyze .
+    /learn status            Progress summary
+  Prose invocation also works (autonomous skill activation).
+  Use Shift+Tab to toggle Plan / Auto modes.
 EOF
-else
-    cat <<'EOF'
-Commands:
-  /learn analyze <path>    Analyze a codebase (expensive, thorough)
-  /learn exercises         Generate Jupyter notebook exercises
-  /learn tutor [section]   Socratic tutoring mode
-  /learn quiz [section]    Adaptive quiz
-  /learn status            Check your progress
+            ;;
+    esac
+}
 
-Start with:  /learn analyze .
-EOF
-fi
+if $DO_CLAUDE; then install_for "claude"; fi
+if $DO_CODEX;  then install_for "codex";  fi
+if $DO_GEMINI; then install_for "gemini"; fi
 
 echo ""
-echo "To update later, re-run this script."
+echo "Done. See PLATFORMS.md for the full mapping. Re-run to update."
