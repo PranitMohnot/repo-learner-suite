@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""
+scaffold_notebook.py — Generate Jupyter notebooks from structured exercise specs.
+
+Usage (from Claude Code):
+    python scaffold_notebook.py --spec exercise_spec.json --output learn/notebooks/
+
+Or import and call directly:
+    from scaffold_notebook import generate_notebook, ExerciseSpec
+    spec = ExerciseSpec(...)
+    generate_notebook(spec, "output.ipynb")
+
+The spec format is designed so Claude can construct it programmatically after
+completing Stages 1-3 of the exercise-gen pipeline.
+"""
+
+import json
+import re
+import sys
+import os
+from dataclasses import dataclass, field, asdict
+from typing import Optional
+from pathlib import Path
+
+try:
+    import nbformat
+    from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+except ImportError:
+    print("nbformat not found. Installing...")
+    os.system(f"{sys.executable} -m pip install nbformat --break-system-packages -q")
+    import nbformat
+    from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+
+def slugify(title: str) -> str:
+    """Convert a title to a filename-safe slug. Strips parens, special chars, etc."""
+    s = title.lower().strip()
+    s = re.sub(r'[^a-z0-9\s-]', '', s)  # strip non-alphanumeric (except space/hyphen)
+    s = re.sub(r'[\s]+', '-', s)          # spaces to hyphens
+    s = re.sub(r'-+', '-', s)             # collapse multiple hyphens
+    return s.strip('-')
+
+
+@dataclass
+class CellSpec:
+    """A single cell in the notebook."""
+    cell_type: str  # "markdown" or "code"
+    source: str
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class ExerciseSpec:
+    """Full specification for one exercise notebook."""
+    number: int
+    title: str
+    goal: str
+    exercise_type: str  # use | modify | create | debug | compare
+    curriculum_section: str = ""  # e.g. "1.1" — maps to curriculum
+    prerequisites: list[str] = field(default_factory=list)
+    estimated_minutes: int = 20
+    setup_code: str = ""
+    guided_cells: list[CellSpec] = field(default_factory=list)
+    task_description: str = ""
+    scaffold_code: str = ""
+    validation_code: str = ""
+    stretch_goal: Optional[str] = None
+    solution_code: str = ""
+    solution_explanation: str = ""
+    dependencies: list[str] = field(default_factory=list)  # pip packages
+
+
+def generate_notebook(spec: ExerciseSpec, output_path: str) -> str:
+    """Generate a .ipynb file from an ExerciseSpec. Returns the output path."""
+    nb = new_notebook()
+    nb.metadata.kernelspec = {
+        "display_name": "Python 3",
+        "language": "python",
+        "name": "python3"
+    }
+
+    # Title and context
+    prereq_text = ""
+    if spec.prerequisites:
+        prereq_links = ", ".join(spec.prerequisites)
+        prereq_text = f"\n\n**Prerequisites:** {prereq_links}"
+
+    nb.cells.append(new_markdown_cell(
+        f"# Exercise {spec.number}: {spec.title}\n\n"
+        f"**Goal:** {spec.goal}\n\n"
+        f"**Type:** {spec.exercise_type} · "
+        f"**Estimated time:** ~{spec.estimated_minutes} minutes"
+        f"{prereq_text}"
+    ))
+
+    # Setup cell
+    if spec.setup_code:
+        nb.cells.append(new_markdown_cell("## Setup\n\nRun this cell first to load dependencies."))
+        nb.cells.append(new_code_cell(spec.setup_code))
+
+    # Guided walkthrough cells
+    if spec.guided_cells:
+        nb.cells.append(new_markdown_cell("## Walkthrough"))
+        for cell_spec in spec.guided_cells:
+            if cell_spec.cell_type == "markdown":
+                nb.cells.append(new_markdown_cell(cell_spec.source))
+            else:
+                nb.cells.append(new_code_cell(cell_spec.source))
+
+    # Task description
+    nb.cells.append(new_markdown_cell(
+        f"## Your turn\n\n{spec.task_description}"
+    ))
+
+    # Scaffold cell
+    if spec.scaffold_code:
+        nb.cells.append(new_code_cell(spec.scaffold_code))
+
+    # Validation cell
+    if spec.validation_code:
+        nb.cells.append(new_markdown_cell(
+            "## Check your work\n\nRun the cell below to validate your solution."
+        ))
+        nb.cells.append(new_code_cell(spec.validation_code))
+
+    # Stretch goal
+    if spec.stretch_goal:
+        nb.cells.append(new_markdown_cell(
+            f"## Stretch goal (optional)\n\n{spec.stretch_goal}"
+        ))
+        nb.cells.append(new_code_cell("# Your stretch goal code here\n"))
+
+    # Solution (collapsed by default)
+    if spec.solution_code:
+        nb.cells.append(new_markdown_cell(
+            "---\n\n## Solution\n\n"
+            "⚠️ **Try the exercise before expanding.** "
+            "You learn more from struggling than from reading."
+        ))
+        solution_cell = new_code_cell(spec.solution_code)
+        solution_cell.metadata["jupyter"] = {"source_hidden": True}
+        nb.cells.append(solution_cell)
+
+        if spec.solution_explanation:
+            explanation_cell = new_markdown_cell(spec.solution_explanation)
+            explanation_cell.metadata["jupyter"] = {"source_hidden": True}
+            nb.cells.append(explanation_cell)
+
+    # Write the notebook
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
+        nbformat.write(nb, f)
+
+    return str(output)
+
+
+def generate_requirements(specs: list[ExerciseSpec], output_path: str) -> str:
+    """Generate requirements.txt from all exercise specs."""
+    all_deps = set()
+    for spec in specs:
+        all_deps.update(spec.dependencies)
+
+    all_deps.add("jupyter")
+    all_deps.add("nbformat")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w") as f:
+        for dep in sorted(all_deps):
+            f.write(dep + "\n")
+
+    return str(output)
+
+
+def generate_pyproject(specs: list[ExerciseSpec], output_path: str, project_name: str = "learn-exercises") -> str:
+    """Generate a minimal pyproject.toml for the exercise notebooks."""
+    all_deps = set()
+    for spec in specs:
+        all_deps.update(spec.dependencies)
+    all_deps.add("jupyter")
+
+    deps_str = ", ".join(f'"{d}"' for d in sorted(all_deps))
+
+    content = f"""[project]
+name = "{project_name}"
+version = "0.1.0"
+description = "Exercise notebooks for learning the codebase"
+requires-python = ">=3.10"
+dependencies = [{deps_str}]
+"""
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w") as f:
+        f.write(content)
+
+    return str(output)
+
+
+def generate_readme(specs: list[ExerciseSpec], output_path: str, detected_manager: str = "pip") -> str:
+    """Generate README.md with exercise sequence and descriptions."""
+    if detected_manager == "uv":
+        setup_block = "```bash\n# Recommended (uv detected)\nuv sync\n\n# Or with pip\npip install -r requirements.txt\n```"
+    else:
+        setup_block = "```bash\npip install -r requirements.txt\n\n# Or with uv\nuv sync\n```"
+
+    lines = [
+        "# Exercises\n",
+        "Work through these notebooks in order. Each one builds on the previous.\n",
+        "## Setup\n",
+        setup_block + "\n",
+        "## Exercise Sequence\n",
+        "| # | Title | Type | Time | Goal |",
+        "|---|-------|------|------|------|",
+    ]
+
+    for spec in sorted(specs, key=lambda s: s.number):
+        filename = f"exercise-{spec.number:02d}-{slugify(spec.title)}.ipynb"
+        lines.append(
+            f"| {spec.number} | [{spec.title}]({filename}) | "
+            f"{spec.exercise_type} | ~{spec.estimated_minutes}min | {spec.goal} |"
+        )
+
+    total_time = sum(s.estimated_minutes for s in specs)
+    lines.append(f"\n**Total estimated time:** ~{total_time} minutes\n")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w") as f:
+        f.write("\n".join(lines))
+
+    return str(output)
+
+
+def from_json(spec_path: str) -> list[ExerciseSpec]:
+    """Load exercise specs from a JSON file."""
+    with open(spec_path) as f:
+        data = json.load(f)
+
+    specs = []
+    for item in data["exercises"]:
+        guided = [
+            CellSpec(
+                cell_type=c["cell_type"],
+                source=c["source"],
+                metadata=c.get("metadata", {})
+            )
+            for c in item.get("guided_cells", [])
+        ]
+        specs.append(ExerciseSpec(
+            number=item["number"],
+            title=item["title"],
+            goal=item["goal"],
+            exercise_type=item["exercise_type"],
+            curriculum_section=item.get("curriculum_section", ""),
+            prerequisites=item.get("prerequisites", []),
+            estimated_minutes=item.get("estimated_minutes", 20),
+            setup_code=item.get("setup_code", ""),
+            guided_cells=guided,
+            task_description=item.get("task_description", ""),
+            scaffold_code=item.get("scaffold_code", ""),
+            validation_code=item.get("validation_code", ""),
+            stretch_goal=item.get("stretch_goal"),
+            solution_code=item.get("solution_code", ""),
+            solution_explanation=item.get("solution_explanation", ""),
+            dependencies=item.get("dependencies", []),
+        ))
+
+    return specs
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate exercise notebooks from specs")
+    parser.add_argument("--spec", required=True, help="Path to exercise spec JSON")
+    parser.add_argument("--output", required=True, help="Output directory for notebooks")
+    args = parser.parse_args()
+
+    specs = from_json(args.spec)
+    output_dir = Path(args.output)
+
+    for spec in specs:
+        filename = f"exercise-{spec.number:02d}-{slugify(spec.title)}.ipynb"
+        path = generate_notebook(spec, output_dir / filename)
+        print(f"Generated: {path}")
+
+    generate_requirements(specs, output_dir / "requirements.txt")
+    generate_pyproject(specs, output_dir / "pyproject.toml")
+    generate_readme(specs, output_dir / "README.md")
+    print(f"\nGenerated {len(specs)} notebooks in {output_dir}/")
