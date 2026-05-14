@@ -6,16 +6,17 @@ exercise pipeline, quiz palette) is universal. Only plumbing differs.
 
 | | Claude Code (default) | Codex CLI | Gemini CLI |
 |---|---|---|---|
-| **Install command** | `./install.sh` | `./install.sh --codex` | not yet supported |
-| **Global skills dir** | `~/.claude/skills/` | `~/.agents/skills/` | — |
-| **Project skills dir** | `.claude/skills/` | `.agents/skills/` | — |
-| **Slash commands** | `/learn`, `/learn analyze`, etc. (in `~/.claude/commands/`) | none — invoke in prose | — |
+| **Install command** | `./install.sh` | `./install.sh --codex` | `./install.sh --gemini` |
+| **Global skills dir** | `~/.claude/skills/` | `~/.agents/skills/` | `~/.gemini/skills/` |
+| **Project skills dir** | `.claude/skills/` | `.agents/skills/` | `.gemini/skills/` |
+| **Slash commands** | `/learn`, `/learn analyze`, etc. (in `~/.claude/commands/`) | none — invoke in prose | `/learn ...` (in `~/.gemini/commands/`) |
 | **Project instructions** | `CLAUDE.md` | `AGENTS.md` | `GEMINI.md` |
-| **AskUserQuestion equivalent** | `AskUserQuestion` tool | `ask_user` (or just prompt in prose) | — |
-| **TodoWrite equivalent** | `TodoWrite` tool | none built-in; skills manage state themselves | — |
-| **Mock-student model** | Haiku (fast tier) | GPT-5 Mini or your tier's fast equivalent | — |
-| **Subagent dispatch** | `Agent` tool (parallel-friendly) | `task_spawn` (conservative — may inline) | — |
-| **Notebook kernel registration** | `ipykernel install --user` | same | — |
+| **AskUserQuestion equivalent** | `AskUserQuestion` tool | `ask_user` (or just prompt in prose) | prompt in prose |
+| **TodoWrite equivalent** | `TodoWrite` tool | none built-in; skills manage state themselves | none built-in |
+| **Mock-student model** | Haiku (fast tier) | GPT-5 Mini or your tier's fast equivalent | Gemini Flash |
+| **Subagent dispatch** | `Agent` tool (parallel-friendly) | `task_spawn` (conservative — may inline) | platform-native; behavior varies |
+| **Skill activation model** | always-loaded SKILL.md | always-loaded SKILL.md | metadata loaded at session start, full content via `activate_skill` |
+| **Notebook kernel registration** | `ipykernel install --user` | same | same |
 
 ## Invocation differences in detail
 
@@ -38,6 +39,24 @@ Skills activate via a different mechanism — `activate_skill` tool, metadata
 loaded at session start, full content fetched on demand. This differs
 enough from the "always-loaded SKILL.md" model that some adaptation work
 is needed. If you want this, file an issue.
+
+## Gemini frontmatter overlay
+
+Gemini wants an `allowed-tools:` list in skill frontmatter — a permission
+boundary listing the tool names a skill is allowed to invoke. The tool
+names are Gemini-specific (`read_file`, `run_shell_command`, etc.) and
+would be noise in CC/Codex installs.
+
+Convention: each skill directory carries a `gemini.skill-meta.yaml` file
+holding just the Gemini-specific frontmatter additions. The shared
+`SKILL.md` stays platform-neutral. `install.sh --gemini` merges the
+overlay into the installed `SKILL.md`'s frontmatter (inserted right
+before the closing `---`). `install.sh` and `install.sh --codex` ignore
+the overlay file and ship `SKILL.md` byte-identical to source.
+
+If a future platform needs its own frontmatter additions, follow the same
+convention: a `<platform>.skill-meta.yaml` per skill, merged only when
+that platform's install flag is set.
 
 ## Subagent behavior caveat (Codex)
 

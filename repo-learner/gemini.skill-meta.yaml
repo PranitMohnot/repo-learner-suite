@@ -1,0 +1,11 @@
+allowed-tools:
+  - activate_skill
+  - invoke_agent
+  - ask_user
+  - read_file
+  - write_file
+  - replace
+  - run_shell_command
+  - update_topic
+  - glob
+  - list_directory

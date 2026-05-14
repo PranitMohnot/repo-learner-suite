@@ -1,0 +1,9 @@
+allowed-tools:
+  - read_file
+  - write_file
+  - replace
+  - run_shell_command
+  - update_topic
+  - glob
+  - grep_search
+  - list_directory

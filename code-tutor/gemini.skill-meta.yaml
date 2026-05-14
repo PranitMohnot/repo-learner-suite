@@ -1,0 +1,7 @@
+allowed-tools:
+  - read_file
+  - write_file
+  - replace
+  - glob
+  - grep_search
+  - list_directory
