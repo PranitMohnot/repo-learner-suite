@@ -264,23 +264,49 @@ def generate_env_files(
     output_dir: Path,
     language: str = "python",
     project_name: str = "learn-exercises",
+    repo_root: Optional[Path] = None,
+    repo_name: Optional[str] = None,
 ) -> list[str]:
     """Generate language-appropriate environment files.
 
-    Python: writes requirements.txt + pyproject.toml.
+    Python: writes requirements.txt + pyproject.toml. Includes the host
+    repo as an editable local install (without it, `import <repo>` from
+    a setup cell fails with ModuleNotFoundError).
+
     To add a new language: add a branch here that writes the language's
     env file(s) and returns their paths. See the "Adding a new language"
     comment block at the top of this module.
+
+    Args:
+        repo_root: Path to the host repo being learned. If None, defaults
+            to `output_dir.parent.parent` (i.e. learn/notebooks/ → repo root).
+            Pass explicitly if the layout differs.
+        repo_name: Importable name of the host repo. If None, derived from
+            repo_root's basename. Used as the [tool.uv.sources] key and
+            should match what the notebooks `import`.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     written = []
     all_deps = sorted({d for s in specs for d in s.dependencies})
 
+    # Resolve the host repo (the thing being learned). Default layout:
+    # <repo>/learn[_test]/notebooks/, so up two levels.
+    if repo_root is None:
+        repo_root = output_dir.parent.parent
+    repo_root = Path(repo_root).resolve()
+    if repo_name is None:
+        repo_name = repo_root.name
+    # Relative path from output_dir (where the env files live) to repo_root.
+    rel_to_repo = os.path.relpath(repo_root, output_dir.resolve())
+
     # Python (default)
     py_deps = set(all_deps) | {"jupyter", "nbformat"}
+    req_lines = sorted(py_deps)
+    # Editable install of the host repo so `import <repo_name>` works.
+    req_lines.append(f"-e {rel_to_repo}")
     req_path = output_dir / "requirements.txt"
-    req_path.write_text("\n".join(sorted(py_deps)) + "\n")
+    req_path.write_text("\n".join(req_lines) + "\n")
     written.append(str(req_path))
 
     deps_str = ", ".join(f'"{d}"' for d in sorted(py_deps))
@@ -290,7 +316,10 @@ def generate_env_files(
         f'version = "0.1.0"\n'
         f'description = "Exercise notebooks for learning the codebase"\n'
         f'requires-python = ">=3.10"\n'
-        f'dependencies = [{deps_str}]\n'
+        f'dependencies = [{deps_str}, "{repo_name}"]\n'
+        f'\n'
+        f'[tool.uv.sources]\n'
+        f'{repo_name} = {{ path = "{rel_to_repo}", editable = true }}\n'
     )
     pyproj_path = output_dir / "pyproject.toml"
     pyproj_path.write_text(pyproj)

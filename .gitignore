@@ -1,2 +1,3 @@
 .DS_Store
 frax/
+__pycache__/

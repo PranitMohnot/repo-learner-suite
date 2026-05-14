@@ -60,3 +60,17 @@ framework (Flask/FastAPI app), a data-pipeline library, a CLI tool
 (click/typer-based), and one heavier framework (pandas, sqlalchemy). Avoid
 re-running on the same domain twice — the goal is to catch shape biases
 that one dogfood couldn't.
+
+## Executed-notebook role-classifier helper
+
+After `nbconvert --execute --allow-errors`, Stage 4d requires inspecting
+each cell's output to confirm setup + guided cells succeeded and only
+scaffold + validation cells errored. Currently the agent walks the
+notebook JSON by hand each time. This is exactly where a regression
+could slip back in (e.g. the original `--allow-errors` bug).
+
+A small helper (e.g. `exercise-gen/scripts/check_executed_notebook.py`)
+would take the executed `.ipynb`, classify each cell by role (using
+ordinal or tags added at scaffold time), and emit a structured per-cell
+verdict the agent can drop straight into `validator_report`. Surfaced by
+the frax dogfood; not yet blocking.

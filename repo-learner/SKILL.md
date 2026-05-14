@@ -107,6 +107,38 @@ to avoid shipping notebooks with platform-broken deps.
   read it. Never reference a package manager other than the one stored
   there in user-facing artifacts.
 
+**`.config.json` schema** (the canonical paths downstream skills read):
+
+```json
+{
+  "user": {
+    "domain_familiarity": "none | textbook | built_one",
+    "framework_familiarity": "...",
+    "env_manager": "uv | pip | poetry | conda",
+    "platform": "macos-arm64 | linux-x86_64 | ...",
+    "goal_notes": "free text from the open-ended question"
+  },
+  "repo": {
+    "name": "...",
+    "language": "python | ...",
+    "root": "absolute path to the repo being learned"
+  },
+  "tuning": {
+    "depth": "comprehensive | light",
+    "mode": "normal | test"
+  }
+}
+```
+
+Downstream skills depend on these paths exactly:
+- `reconcile.py` reads `user.env_manager` and `repo.language`.
+- `scaffold_notebook.py:generate_env_files` derives the host-repo
+  editable-install path from `repo.root` (or the orchestrator passes it
+  explicitly).
+- `exercise-gen` reads `user.platform` for dependency selection.
+- `tuning.depth` and `tuning.mode` gate Light mode and Test mode
+  behavior across all skills.
+
 ## Shared State
 
 All sub-skills read/write to `<repo-root>/learn/`:
